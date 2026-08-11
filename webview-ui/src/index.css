@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --vscode-bg: var(--vscode-sideBar-background, #1e1e1e);
+  --vscode-fg: var(--vscode-sideBar-foreground, #cccccc);
+}
+
+body {
+  background-color: var(--vscode-bg);
+  color: var(--vscode-fg);
+  margin: 0;
+  padding: 0;
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+}
+
+.markdown-body pre {
+  position: relative;
+  border-radius: 4px;
+  margin: 8px 0;
+  padding: 12px;
+  background: var(--vscode-textCodeBlock-background, #1e1e1e);
+  overflow-x: auto;
+}
+
+.markdown-body code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.9em;
+}
+
+.markdown-body p {
+  margin: 4px 0;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  border: none;
+  border-radius: 3px;
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.markdown-body pre:hover .copy-btn {
+  opacity: 1;
+}
