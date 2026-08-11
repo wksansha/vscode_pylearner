@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -12,21 +12,25 @@ const CodeBlock: React.FC<{
   className?: string;
 }> = ({ children, className }) => {
   const [copied, setCopied] = useState(false);
+  const codeRef = useRef<HTMLElement>(null);
 
   const handleCopy = useCallback(() => {
-    const text = String(children).replace(/\n$/, "");
+    // rehype-highlight renders block code as React elements (hljs spans),
+    // so String(children) would produce "[object Object]...". Read the
+    // rendered text content directly from the DOM instead.
+    const text = (codeRef.current?.textContent ?? "").replace(/\n$/, "");
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
-  }, [children]);
+  }, []);
 
   return (
     <pre className={className}>
       <button className="copy-btn" onClick={handleCopy}>
         {copied ? "Copied!" : "Copy"}
       </button>
-      <code className={className}>{children}</code>
+      <code ref={codeRef} className={className}>{children}</code>
     </pre>
   );
 };

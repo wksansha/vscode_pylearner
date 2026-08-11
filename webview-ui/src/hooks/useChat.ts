@@ -112,10 +112,24 @@ export function useChat() {
       .reverse()
       .find((m) => m.role === "user");
     if (lastUserMsg) {
-      // Remove failed assistant message
+      // Remove only the failed turn, never a valid completed assistant
+      // answer from an earlier turn.
       setMessages((prev) => {
-        const idx = prev.findLastIndex((m) => m.role === "assistant");
-        if (idx > -1) return prev.slice(0, idx);
+        // If the streaming placeholder is still present, drop it together
+        // with its user message so the re-sent text isn't duplicated.
+        const streamIdx = prev.findLastIndex((m) => m.isStreaming);
+        if (streamIdx > -1) {
+          const start =
+            streamIdx > 0 && prev[streamIdx - 1].role === "user"
+              ? streamIdx - 1
+              : streamIdx;
+          return prev.slice(0, start);
+        }
+        // No placeholder: the error handler already filtered it out, so only
+        // the failed turn's user message remains. Remove that (not the last
+        // assistant message, which may be a valid earlier answer).
+        const lastUserIdx = prev.findLastIndex((m) => m.role === "user");
+        if (lastUserIdx > -1) return prev.slice(0, lastUserIdx);
         return prev;
       });
       sendMessage(lastUserMsg.text);
