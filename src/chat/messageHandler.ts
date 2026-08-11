@@ -13,7 +13,7 @@ export async function handleMessage(
   router: LlmRouter,
   l1Writer: L1Writer,
   chatStore: ChatStore,
-  setAbortController: (ctrl: AbortController) => void
+  abortRef: { current: AbortController | null }
 ): Promise<void> {
   try {
     switch (payload.type) {
@@ -64,18 +64,22 @@ export async function handleMessage(
 
         // Stream response
         const aborter = new AbortController();
-        setAbortController(aborter);
+        abortRef.current = aborter;
 
         let fullResponse = "";
 
-        await backend.chat(
-          llmMessages,
-          (chunk: string) => {
-            fullResponse += chunk;
-            webview.postMessage({ type: MSG_TYPES.stream, chunk, sessionId });
-          },
-          aborter.signal
-        );
+        try {
+          await backend.chat(
+            llmMessages,
+            (chunk: string) => {
+              fullResponse += chunk;
+              webview.postMessage({ type: MSG_TYPES.stream, chunk, sessionId });
+            },
+            aborter.signal
+          );
+        } finally {
+          abortRef.current = null;
+        }
 
         // Save assistant message
         const assistantMsg: Message = {
@@ -100,9 +104,10 @@ export async function handleMessage(
       }
 
       case MSG_TYPES.abort: {
-        const aborter = new AbortController();
-        aborter.abort();
-        setAbortController(aborter);
+        // Abort the in-flight request (if any). The chat case stores the
+        // controller in the shared ref; aborting a stale/null ref is a no-op.
+        abortRef.current?.abort();
+        abortRef.current = null;
         break;
       }
 

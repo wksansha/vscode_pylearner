@@ -7,7 +7,9 @@ import type { ChatStore } from "../storage/chatStore";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
-  private abortController: AbortController | null = null;
+  // Mutable ref shared with messageHandler so an `abort` message can cancel
+  // the in-flight chat request.
+  private abortRef: { current: AbortController | null } = { current: null };
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -40,9 +42,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.router,
         this.l1Writer,
         this.chatStore,
-        (ctrl) => {
-          this.abortController = ctrl;
-        }
+        this.abortRef
       );
     });
   }

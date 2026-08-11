@@ -6,7 +6,7 @@
   "publisher": "deeptutor",
   "license": "Apache-2.0",
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.96.0"
   },
   "categories": ["Education", "Machine Learning"],
   "activationEvents": [
@@ -89,14 +89,14 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run build:webview && npm run compile",
     "compile": "node esbuild.config.js",
     "watch": "node esbuild.config.js --watch",
     "build:webview": "cd webview-ui && npm run build",
     "lint": "eslint src --ext ts"
   },
   "devDependencies": {
-    "@types/vscode": "^1.90.0",
+    "@types/vscode": "^1.96.0",
     "esbuild": "^0.21.0",
     "typescript": "^5.5.0",
     "@types/node": "^20.14.0"

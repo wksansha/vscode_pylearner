@@ -9,10 +9,9 @@ export class VscodeLmBackend implements LlmBackend {
     onChunk: (text: string) => void,
     signal: AbortSignal
   ): Promise<void> {
-    const [model] = await vscode.lm.selectChatModels({
-      vendor: "copilot",
-      family: "gpt-4o",
-    });
+    // No vendor/family filter: use any model provided by any installed
+    // language model provider (e.g. Copilot's Claude models as well as GPT-4o).
+    const [model] = await vscode.lm.selectChatModels();
     if (!model) {
       throw new Error(
         "No VS Code language model available. Install GitHub Copilot or switch to another provider in Settings."

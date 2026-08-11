@@ -6,9 +6,7 @@ import { LlmRouter } from "./llm/router";
 import { ChatViewProvider } from "./chat/chatProvider";
 import { createEditListener } from "./events/editListener";
 import { createRunListener } from "./events/runListener";
-import { getConfig } from "./settings/config";
 
-let monitorEnabled = true;
 let chatProvider: ChatViewProvider;
 
 export function activate(context: vscode.ExtensionContext) {
@@ -18,7 +16,6 @@ export function activate(context: vscode.ExtensionContext) {
   const l1Writer = new L1Writer(context.globalStorageUri);
   const chatStore = new ChatStore(context.globalStorageUri);
   const router = new LlmRouter();
-  monitorEnabled = getConfig().monitor.editEnabled || getConfig().monitor.runEnabled;
 
   // Register event listeners
   context.subscriptions.push(createEditListener(l1Writer));
@@ -49,9 +46,17 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand(CMD_IDS.toggleMonitor, () => {
-      monitorEnabled = !monitorEnabled;
+      // Write through to real config so the event listeners (which read
+      // pylearner.monitor.* directly) actually honor the toggle, and so the
+      // change is reflected in the Settings UI.
+      const cfg = vscode.workspace.getConfiguration("pylearner");
+      const current = cfg.get<boolean>("monitor.editEnabled") ?? true;
+      const next = !current;
+      const target = vscode.ConfigurationTarget.Global;
+      void cfg.update("monitor.editEnabled", next, target);
+      void cfg.update("monitor.runEnabled", next, target);
       vscode.window.showInformationMessage(
-        `Python Learner monitoring: ${monitorEnabled ? "ON" : "OFF"}`
+        `Python Learner monitoring: ${next ? "ON" : "OFF"}`
       );
     })
   );
