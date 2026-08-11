@@ -1,0 +1,107 @@
+{
+  "name": "vscode-pylearner",
+  "displayName": "Python Learner",
+  "description": "AI-powered Python learning companion",
+  "version": "0.1.0",
+  "publisher": "deeptutor",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Education", "Machine Learning"],
+  "activationEvents": [
+    "onLanguage:python",
+    "onCommand:pylearner.openChat"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pylearner-sidebar",
+          "title": "Python Learner",
+          "icon": "assets/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "pylearner-sidebar": [
+        {
+          "type": "webview",
+          "id": "pylearner.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "pylearner.openChat",
+        "title": "Python Learner: Open Chat"
+      },
+      {
+        "command": "pylearner.newChat",
+        "title": "Python Learner: New Chat"
+      },
+      {
+        "command": "pylearner.toggleMonitor",
+        "title": "Python Learner: Toggle Monitoring"
+      },
+      {
+        "command": "pylearner.openSettings",
+        "title": "Python Learner: Settings"
+      }
+    ],
+    "configuration": {
+      "title": "Python Learner",
+      "properties": {
+        "pylearner.llm.provider": {
+          "type": "string",
+          "default": "vscode-lm",
+          "enum": ["vscode-lm", "ollama", "openai"],
+          "description": "LLM provider for chat"
+        },
+        "pylearner.llm.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model name (optional, provider-specific)"
+        },
+        "pylearner.llm.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key (required for OpenAI)"
+        },
+        "pylearner.llm.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Base URL for Ollama/OpenAI-compatible API"
+        },
+        "pylearner.monitor.editEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Monitor Python file edits"
+        },
+        "pylearner.monitor.runEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Monitor Python script execution"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "node esbuild.config.js",
+    "watch": "node esbuild.config.js --watch",
+    "build:webview": "cd webview-ui && npm run build",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.21.0",
+    "typescript": "^5.5.0",
+    "@types/node": "^20.14.0"
+  },
+  "dependencies": {
+    "ulidx": "^1.0.0"
+  }
+}
