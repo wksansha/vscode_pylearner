@@ -1,4 +1,7 @@
 node_modules
 out
-.vscode-test
+webview-ui/dist
+webview-ui/node_modules
 *.vsix
+.DS_Store
+.vscode-test
