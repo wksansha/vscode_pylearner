@@ -35,8 +35,8 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
 
   disposables.push(
     vscode.tasks.onDidEndTaskProcess((e) => {
-      if (!isRunEnabled()) return;
       if (!activeTasks.delete(e.execution)) return;
+      if (!isRunEnabled()) return;
       const kind =
         e.exitCode === 0 ? EVENT_KINDS.runSuccess : EVENT_KINDS.runError;
       const errorMessage =
@@ -103,8 +103,8 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
 
   disposables.push(
     vscode.debug.onDidTerminateDebugSession((session) => {
-      if (!isRunEnabled()) return;
       if (!activeDebugSessions.delete(session)) return;
+      if (!isRunEnabled()) return;
       writer.append("debug", EVENT_KINDS.debugSessionEnd, {
         name: session.configuration?.name,
         type: session.configuration?.type,
