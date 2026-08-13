@@ -151,7 +151,7 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
       if (!isRunEnabled()) return;
       if (!(e.execution as any)._pylearner_tracked) return;
       delete (e.execution as any)._pylearner_tracked;
-      const exitCode = e.execution.exitCode;
+      const exitCode = e.exitCode; // exitCode is on the end EVENT, not e.execution
       if (exitCode === undefined) {
         // Shell integration disabled — no reliable exit code, skip silently
         console.warn(
