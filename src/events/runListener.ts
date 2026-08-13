@@ -76,25 +76,5 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
     })
   );
 
-  // Also listen to terminal output for Python execution patterns
-  // Note: onDidWriteTerminalData is a *proposed* VS Code API — not in stable
-  // releases nor in @types/vscode. Guard registration so activation never
-  // throws; this hook only activates in builds where the API exists.
-  const onDidWriteTerminalData = (vscode.window as any).onDidWriteTerminalData;
-  if (typeof onDidWriteTerminalData === "function") {
-    disposables.push(
-      onDidWriteTerminalData((e: any) => {
-        // Best-effort tracking: look for `python *.py` in written data
-        const enabled = vscode.workspace
-          .getConfiguration()
-          .get<boolean>(CONFIG_KEYS.monitorRun, true);
-        if (!enabled) return;
-
-        // We don't parse individual terminal lines here — task-based listening
-        // is the primary mechanism. This is a hook for future enhancement.
-      })
-    );
-  }
-
   return vscode.Disposable.from(...disposables);
 }
