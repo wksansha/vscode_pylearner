@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { L1Writer } from "../storage/l1Writer";
-import { CONFIG_KEYS } from "../constants";
+import { CONFIG_KEYS, EVENT_KINDS } from "../constants";
 
 export function createEditListener(writer: L1Writer): vscode.Disposable {
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -58,11 +58,27 @@ export function createEditListener(writer: L1Writer): vscode.Disposable {
     debounceTimer = setTimeout(flush, 500);
   });
 
+  const saveDisposable = vscode.workspace.onDidSaveTextDocument((doc) => {
+    const enabled = vscode.workspace
+      .getConfiguration()
+      .get<boolean>(CONFIG_KEYS.monitorEdit, true);
+    if (!enabled) return;
+    if (!doc.fileName.endsWith(".py")) return;
+
+    const workspaceRoot = vscode.workspace.getWorkspaceFolder(doc.uri);
+    const file = workspaceRoot
+      ? vscode.workspace.asRelativePath(doc.uri, false)
+      : doc.uri.fsPath;
+
+    writer.append("edit", EVENT_KINDS.fileSave, { file });
+  });
+
   return {
     dispose() {
       if (debounceTimer) clearTimeout(debounceTimer);
       flush(); // flush any pending changes
       disposable.dispose();
+      saveDisposable.dispose();
     },
   };
 }
