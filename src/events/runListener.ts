@@ -112,5 +112,29 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
     })
   );
 
+  // --- Breakpoint changes ---
+  const pyLocation = (bp: vscode.Breakpoint): string => {
+    if (!(bp instanceof vscode.SourceBreakpoint)) return "";
+    const uri = bp.location.uri;
+    if (uri.scheme !== "file" || !uri.fsPath.endsWith(".py")) return "";
+    return `${uri.fsPath}:${bp.location.range.start.line + 1}`;
+  };
+
+  disposables.push(
+    vscode.debug.onDidChangeBreakpoints((e) => {
+      if (!isRunEnabled()) return;
+      const added = e.added.map(pyLocation).filter(Boolean);
+      const removed = e.removed.map(pyLocation).filter(Boolean);
+      const changed = e.changed.map(pyLocation).filter(Boolean);
+      if (added.length + removed.length + changed.length === 0) return;
+      writer.append("debug", EVENT_KINDS.breakpointChange, {
+        added: added.length,
+        removed: removed.length,
+        changed: changed.length,
+        locations: [...added, ...removed, ...changed].slice(0, 10),
+      });
+    })
+  );
+
   return vscode.Disposable.from(...disposables);
 }
