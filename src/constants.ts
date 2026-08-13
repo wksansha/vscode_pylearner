@@ -33,7 +33,17 @@ export const MSG_TYPES = {
   monitorStatus: "monitorStatus",
 } as const;
 
-export const SURFACES = ["edit", "run", "chat"] as const;
+export const EVENT_KINDS = {
+  runSuccess: "execution_success",
+  runError: "execution_error",
+  debugSessionStart: "session_start",
+  debugSessionEnd: "session_end",
+  breakpointChange: "breakpoint_change",
+  fileSave: "file_save",
+  diagnosticsChange: "diagnostics_change",
+} as const;
+
+export const SURFACES = ["edit", "run", "chat", "debug"] as const;
 export type Surface = (typeof SURFACES)[number];
 
 export const STORAGE_DIRS = {
