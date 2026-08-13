@@ -1,0 +1,20 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "npm: build",
+      "type": "npm",
+      "script": "build:webview",
+      "group": "build",
+      "problemMatcher": [],
+      "dependsOn": ["npm: compile"]
+    },
+    {
+      "label": "npm: compile",
+      "type": "npm",
+      "script": "compile",
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}
