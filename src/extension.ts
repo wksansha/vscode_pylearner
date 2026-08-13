@@ -6,6 +6,7 @@ import { LlmRouter } from "./llm/router";
 import { ChatViewProvider } from "./chat/chatProvider";
 import { createEditListener } from "./events/editListener";
 import { createRunListener } from "./events/runListener";
+import { createDiagnosticsListener } from "./events/diagnosticsListener";
 
 let chatProvider: ChatViewProvider;
 
@@ -20,6 +21,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Register event listeners
   context.subscriptions.push(createEditListener(l1Writer));
   context.subscriptions.push(createRunListener(l1Writer));
+  context.subscriptions.push(createDiagnosticsListener(l1Writer));
 
   // Register Chat Webview Provider
   chatProvider = new ChatViewProvider(context, router, l1Writer, chatStore);
