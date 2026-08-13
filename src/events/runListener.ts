@@ -86,5 +86,31 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
     })
   );
 
+  // --- Debug sessions (F5) ---
+  disposables.push(
+    vscode.debug.onDidStartDebugSession((session) => {
+      if (!isRunEnabled()) return;
+      const type = session.configuration?.type?.toLowerCase() ?? "";
+      if (!type.includes("python") && !type.includes("debugpy")) return;
+      activeDebugSessions.add(session);
+      writer.append("debug", EVENT_KINDS.debugSessionStart, {
+        name: session.configuration?.name,
+        type: session.configuration?.type,
+        program: session.configuration?.program,
+      });
+    })
+  );
+
+  disposables.push(
+    vscode.debug.onDidTerminateDebugSession((session) => {
+      if (!isRunEnabled()) return;
+      if (!activeDebugSessions.delete(session)) return;
+      writer.append("debug", EVENT_KINDS.debugSessionEnd, {
+        name: session.configuration?.name,
+        type: session.configuration?.type,
+      });
+    })
+  );
+
   return vscode.Disposable.from(...disposables);
 }
