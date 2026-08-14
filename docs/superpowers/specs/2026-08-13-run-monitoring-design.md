@@ -78,3 +78,12 @@
 
 - shell execution 事件依赖 shell integration（VS Code 1.93+ 默认开启）；若用户手动关闭则 #1 静默失效——实现时在日志中提示
 - `onDidEndTerminalShellExecution` 的 `exitCode` 在 shell integration 未启用时为 `undefined`——此时不写 execution_* 事件
+
+## 运行时验证发现的限制（2026-08-14）
+
+本机（VS Code 1.133 + Windows PowerShell 5.1 + conpty）实测：
+
+- **粘贴的命令不被命令检测捕获**：复制粘贴到终端执行的命令不产生 shell execution 事件（绕过 PSReadLine 缓冲区）；**手敲命令正常**。终端监听对手敲可靠，对粘贴可能静默丢失——属环境限制，非插件缺陷
+- **cmd 终端不支持 shell integration**，不产生任何终端事件（▶ 按钮不受影响，其走内部任务路径）
+- **调试终端（程序化启动的命令）事件可靠**；常规终端依赖上述命令检测
+- PowerShell 5.1 原生参数传递有拆分 quirk（如 `python -c "import sys; sys.exit(3)"` 实际退出码为 1 而非 3）——插件记录的是真实退出码
