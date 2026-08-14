@@ -43,6 +43,7 @@ export function createEditListener(writer: L1Writer): vscode.Disposable {
       .get<boolean>(CONFIG_KEYS.monitorEdit, true);
     if (!enabled) return;
 
+    if (e.document.uri.scheme !== "file") return;
     if (!e.document.fileName.endsWith(".py")) return;
     if (e.contentChanges.length === 0) return;
 
