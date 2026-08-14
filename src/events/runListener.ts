@@ -59,6 +59,7 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
       if (activeTasks.size > 0 || activeDebugSessions.size > 0) return;
       const cmd = e.execution.commandLine.value.toLowerCase();
       if (!cmd.includes("python") && !cmd.includes(".py")) return;
+      if (cmd.includes("debugpy")) return; // debug launcher — session listener owns it
       (e.execution as any)._pylearner_tracked = true;
     })
   );
