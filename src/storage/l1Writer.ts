@@ -29,9 +29,12 @@ export class L1Writer {
     const fileUri = vscode.Uri.joinPath(dirUri, `${today}.jsonl`);
     const line = JSON.stringify(event) + "\n";
 
-    // Serialize writes per surface to avoid interleaving
+    // Serialize writes per surface to avoid interleaving. The stored lock is
+    // normalized to never reject — one failed append must not poison the chain
+    // (a rejected promise would make every later `.then` skip, silently
+    // killing the surface). Callers still see the real error via `await next`.
     const prev = this.locks.get(event.surface) ?? Promise.resolve();
-    const next = prev.then(async () => {
+    const next = prev.catch(() => {}).then(async () => {
       try {
         await vscode.workspace.fs.createDirectory(dirUri);
       } catch {
@@ -49,7 +52,7 @@ export class L1Writer {
       combined.set(encoder.encode(line), existing.length);
       await vscode.workspace.fs.writeFile(fileUri, combined);
     });
-    this.locks.set(event.surface, next);
+    this.locks.set(event.surface, next.catch(() => {}));
     await next;
   }
 }
