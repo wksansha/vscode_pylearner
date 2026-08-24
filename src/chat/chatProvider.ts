@@ -39,6 +39,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       await handleMessage(
         payload,
         webviewView.webview,
+        this.context.secrets,
         this.router,
         this.l1Writer,
         this.chatStore,

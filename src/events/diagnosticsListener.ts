@@ -41,7 +41,7 @@ export function createDiagnosticsListener(writer: L1Writer): vscode.Disposable {
       ? vscode.workspace.asRelativePath(uri, false)
       : uri.fsPath;
 
-    writer.append("edit", EVENT_KINDS.diagnosticsChange, {
+    writer.append("diag", EVENT_KINDS.diagnosticsChange, {
       file,
       errors,
       warnings,

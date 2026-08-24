@@ -24,12 +24,12 @@ export class LlmRouter {
     this.config = getConfig().llm;
   }
 
-  resolve(): LlmBackend {
+  resolve(apiKey = ""): LlmBackend {
     switch (this.config.provider) {
       case "ollama":
         return new OllamaBackend(this.config);
       case "openai":
-        return new OpenAIBackend(this.config);
+        return new OpenAIBackend({ ...this.config, apiKey });
       case "vscode-lm":
       default:
         return new VscodeLmBackend();

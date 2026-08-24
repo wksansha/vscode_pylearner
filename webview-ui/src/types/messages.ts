@@ -14,15 +14,35 @@ export interface ChatMessage {
   isStreaming?: boolean;
 }
 
+export interface ChatSessionSummary {
+  id: string;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+// Messages persisted by the host (no React-key `id`, no `isStreaming`).
+export interface StoredMessage {
+  role: "user" | "assistant";
+  text: string;
+  ts: string;
+  model?: string;
+}
+
 export type WebviewMessage =
   | { type: "chat"; text: string; sessionId: string }
   | { type: "getConfig" }
   | { type: "saveConfig"; config: Partial<LlmConfig> }
-  | { type: "abort" };
+  | { type: "abort" }
+  | { type: "loadSessions" }
+  | { type: "loadSession"; sessionId: string }
+  | { type: "deleteSession"; sessionId: string };
 
 export type HostMessage =
   | { type: "stream"; chunk: string; sessionId: string }
   | { type: "done"; sessionId: string }
   | { type: "error"; message: string }
   | { type: "config"; config: LlmConfig }
-  | { type: "newChat" };
+  | { type: "newChat" }
+  | { type: "sessionsList"; sessions: ChatSessionSummary[] }
+  | { type: "sessionLoaded"; sessionId: string; messages: StoredMessage[] };

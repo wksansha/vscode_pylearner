@@ -10,8 +10,7 @@
   },
   "categories": ["Education", "Machine Learning"],
   "activationEvents": [
-    "onLanguage:python",
-    "onCommand:pylearner.openChat"
+    "onLanguage:python"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -64,11 +63,6 @@
           "type": "string",
           "default": "",
           "description": "Model name (optional, provider-specific)"
-        },
-        "pylearner.llm.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "API key (required for OpenAI)"
         },
         "pylearner.llm.baseUrl": {
           "type": "string",

@@ -1,11 +1,28 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { ChatMessage, LlmConfig } from "../types/messages";
+import type {
+  ChatMessage,
+  ChatSessionSummary,
+  LlmConfig,
+  StoredMessage,
+} from "../types/messages";
 import { useStream } from "./useStream";
 
 const vscode = acquireVsCodeApi();
 
+// React needs a stable key per message; the stored messages don't carry one.
+function toChatMessage(m: StoredMessage, index: number): ChatMessage {
+  return {
+    id: `hist_${m.ts}_${index}`,
+    role: m.role,
+    text: m.text,
+    ts: m.ts,
+    model: m.model,
+  };
+}
+
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
   const [config, setConfig] = useState<LlmConfig>({
     provider: "vscode-lm",
     model: "",
@@ -13,7 +30,10 @@ export function useChat() {
     baseUrl: "",
   });
   const [error, setError] = useState<string | null>(null);
-  const sessionIdRef = useRef<string>(crypto.randomUUID());
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() =>
+    crypto.randomUUID()
+  );
+  const sessionIdRef = useRef<string>(currentSessionId);
   const { isStreaming, streamingText, startStream, appendChunk, endStream } =
     useStream();
 
@@ -46,6 +66,7 @@ export function useChat() {
           endStream();
           if (msg.sessionId) {
             sessionIdRef.current = msg.sessionId as string;
+            setCurrentSessionId(msg.sessionId as string);
           }
           break;
         }
@@ -61,16 +82,33 @@ export function useChat() {
           setConfig(msg.config as LlmConfig);
           break;
 
-        case "newChat":
+        case "newChat": {
+          const id = crypto.randomUUID();
           setMessages([]);
-          sessionIdRef.current = crypto.randomUUID();
+          sessionIdRef.current = id;
+          setCurrentSessionId(id);
           setError(null);
           break;
+        }
+
+        case "sessionsList":
+          setSessions(msg.sessions as ChatSessionSummary[]);
+          break;
+
+        case "sessionLoaded": {
+          const stored = msg.messages as StoredMessage[];
+          setMessages(stored.map(toChatMessage));
+          sessionIdRef.current = msg.sessionId as string;
+          setCurrentSessionId(msg.sessionId as string);
+          setError(null);
+          break;
+        }
       }
     };
 
     window.addEventListener("message", handler);
     vscode.postMessage({ type: "getConfig" });
+    vscode.postMessage({ type: "loadSessions" });
     return () => window.removeEventListener("message", handler);
   }, [appendChunk, endStream]);
 
@@ -137,10 +175,31 @@ export function useChat() {
   }, [messages, sendMessage]);
 
   const newChat = useCallback(() => {
+    const id = crypto.randomUUID();
     setMessages([]);
-    sessionIdRef.current = crypto.randomUUID();
+    sessionIdRef.current = id;
+    setCurrentSessionId(id);
     setError(null);
-    vscode.postMessage({ type: "newChat" });
+  }, []);
+
+  const refreshSessions = useCallback(() => {
+    vscode.postMessage({ type: "loadSessions" });
+  }, []);
+
+  const loadSession = useCallback((sessionId: string) => {
+    vscode.postMessage({ type: "loadSession", sessionId });
+  }, []);
+
+  const deleteSession = useCallback((sessionId: string) => {
+    vscode.postMessage({ type: "deleteSession", sessionId });
+    // If the deleted session is the one on screen, start fresh.
+    if (sessionIdRef.current === sessionId) {
+      const id = crypto.randomUUID();
+      setMessages([]);
+      sessionIdRef.current = id;
+      setCurrentSessionId(id);
+      setError(null);
+    }
   }, []);
 
   const saveConfig = useCallback(
@@ -152,6 +211,8 @@ export function useChat() {
 
   return {
     messages,
+    sessions,
+    currentSessionId,
     config,
     error,
     isStreaming,
@@ -159,6 +220,9 @@ export function useChat() {
     sendMessage,
     retry,
     newChat,
+    loadSession,
+    deleteSession,
+    refreshSessions,
     saveConfig,
   };
 }

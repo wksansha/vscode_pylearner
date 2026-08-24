@@ -9,7 +9,7 @@ export class OpenAIBackend implements LlmBackend {
 
   constructor(config: LlmConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
-    this.apiKey = config.apiKey;
+    this.apiKey = config.apiKey ?? "";
     this.model = config.model || "gpt-4o-mini";
   }
 

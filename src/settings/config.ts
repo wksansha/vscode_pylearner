@@ -4,8 +4,10 @@ import { CONFIG_KEYS } from "../constants";
 export interface LlmConfig {
   provider: string;
   model: string;
-  apiKey: string;
   baseUrl: string;
+  // Optional here: the real value is resolved from SecretStorage at request
+  // time (see messageHandler) and injected into the backend by LlmRouter.
+  apiKey?: string;
 }
 
 export interface MonitorConfig {
@@ -23,7 +25,6 @@ function readLlmConfig(): LlmConfig {
   return {
     provider: cfg.get<string>(CONFIG_KEYS.llmProvider, "vscode-lm"),
     model: cfg.get<string>(CONFIG_KEYS.llmModel, ""),
-    apiKey: cfg.get<string>(CONFIG_KEYS.llmApiKey, ""),
     baseUrl: cfg.get<string>(CONFIG_KEYS.llmBaseUrl, "http://localhost:11434"),
   };
 }

@@ -4,10 +4,13 @@ import { ChatMessages } from "./components/ChatMessages";
 import { ChatInput } from "./components/ChatInput";
 import { ModelSelector } from "./components/ModelSelector";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { SessionList } from "./components/SessionList";
 
 const App: React.FC = () => {
   const {
     messages,
+    sessions,
+    currentSessionId,
     config,
     error,
     isStreaming,
@@ -15,10 +18,14 @@ const App: React.FC = () => {
     sendMessage,
     retry,
     newChat,
+    loadSession,
+    deleteSession,
+    refreshSessions,
     saveConfig,
   } = useChat();
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   return (
     <div className="h-screen flex flex-col">
@@ -29,6 +36,16 @@ const App: React.FC = () => {
           <ModelSelector config={config} onSaveConfig={saveConfig} />
         </div>
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => {
+              refreshSessions();
+              setShowHistory((v) => !v);
+            }}
+            className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+            title="Chat History"
+          >
+            ☰
+          </button>
           <button
             onClick={newChat}
             className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded"
@@ -45,6 +62,20 @@ const App: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Session List */}
+      {showHistory && (
+        <SessionList
+          sessions={sessions}
+          currentSessionId={currentSessionId}
+          onLoad={(id) => {
+            loadSession(id);
+            setShowHistory(false);
+          }}
+          onDelete={deleteSession}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
 
       {/* Messages */}
       <ChatMessages

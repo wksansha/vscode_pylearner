@@ -5,11 +5,12 @@ import type { L1Writer } from "../storage/l1Writer";
 import type { ChatStore } from "../storage/chatStore";
 import type { ChatSession, Message } from "../storage/chatStore";
 import { getConfig } from "../settings/config";
-import { MSG_TYPES } from "../constants";
+import { MSG_TYPES, SECRET_KEYS } from "../constants";
 
 export async function handleMessage(
   payload: Record<string, unknown>,
   webview: vscode.Webview,
+  secrets: vscode.SecretStorage,
   router: LlmRouter,
   l1Writer: L1Writer,
   chatStore: ChatStore,
@@ -21,9 +22,11 @@ export async function handleMessage(
         const userText = payload.text as string;
         if (!userText?.trim()) return;
 
-        // Refresh router config
+        // Refresh router config; the API key comes from SecretStorage so it
+        // never touches settings.json (Settings Sync would leak it).
         router.refreshConfig();
-        const backend = router.resolve();
+        const apiKey = (await secrets.get(SECRET_KEYS.llmApiKey)) ?? "";
+        const backend = router.resolve(apiKey);
 
         // Build messages array from current session
         const sessionId = (payload.sessionId as string) ?? ulid();
@@ -113,9 +116,10 @@ export async function handleMessage(
 
       case MSG_TYPES.getConfig: {
         const config = getConfig();
+        const apiKey = (await secrets.get(SECRET_KEYS.llmApiKey)) ?? "";
         webview.postMessage({
           type: MSG_TYPES.config,
-          config: config.llm,
+          config: { ...config.llm, apiKey },
         });
         break;
       }
@@ -138,11 +142,7 @@ export async function handleMessage(
           );
         }
         if (config.apiKey !== undefined) {
-          await cfg.update(
-            "pylearner.llm.apiKey",
-            config.apiKey,
-            vscode.ConfigurationTarget.Global
-          );
+          await secrets.store(SECRET_KEYS.llmApiKey, config.apiKey);
         }
         if (config.baseUrl) {
           await cfg.update(
@@ -152,9 +152,60 @@ export async function handleMessage(
           );
         }
         router.refreshConfig();
+        const savedKey = (await secrets.get(SECRET_KEYS.llmApiKey)) ?? "";
         webview.postMessage({
           type: MSG_TYPES.config,
-          config: getConfig().llm,
+          config: { ...getConfig().llm, apiKey: savedKey },
+        });
+        break;
+      }
+
+      case MSG_TYPES.loadSessions: {
+        const sessions = await chatStore.listSessions();
+        webview.postMessage({
+          type: MSG_TYPES.sessionsList,
+          sessions: sessions.map((s) => ({
+            id: s.id,
+            title: s.title,
+            updatedAt: s.updatedAt,
+            messageCount: s.messages.length,
+          })),
+        });
+        break;
+      }
+
+      case MSG_TYPES.loadSession: {
+        const sessionId = payload.sessionId as string;
+        if (!sessionId) return;
+        const session = await chatStore.getSession(sessionId);
+        if (!session) {
+          webview.postMessage({
+            type: MSG_TYPES.error,
+            message: `Session not found: ${sessionId}`,
+          });
+          break;
+        }
+        webview.postMessage({
+          type: MSG_TYPES.sessionLoaded,
+          sessionId: session.id,
+          messages: session.messages,
+        });
+        break;
+      }
+
+      case MSG_TYPES.deleteSession: {
+        const sessionId = payload.sessionId as string;
+        if (!sessionId) return;
+        await chatStore.deleteSession(sessionId);
+        const sessions = await chatStore.listSessions();
+        webview.postMessage({
+          type: MSG_TYPES.sessionsList,
+          sessions: sessions.map((s) => ({
+            id: s.id,
+            title: s.title,
+            updatedAt: s.updatedAt,
+            messageCount: s.messages.length,
+          })),
         });
         break;
       }

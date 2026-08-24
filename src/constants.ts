@@ -13,10 +13,15 @@ export const VIEW_IDS = {
 export const CONFIG_KEYS = {
   llmProvider: "pylearner.llm.provider",
   llmModel: "pylearner.llm.model",
-  llmApiKey: "pylearner.llm.apiKey",
   llmBaseUrl: "pylearner.llm.baseUrl",
   monitorEdit: "pylearner.monitor.editEnabled",
   monitorRun: "pylearner.monitor.runEnabled",
+} as const;
+
+// API key lives in SecretStorage (never in settings.json — Settings Sync
+// would copy it to the user's account otherwise).
+export const SECRET_KEYS = {
+  llmApiKey: "pylearner.llm.apiKey",
 } as const;
 
 export const MSG_TYPES = {
@@ -25,12 +30,17 @@ export const MSG_TYPES = {
   getConfig: "getConfig",
   saveConfig: "saveConfig",
   abort: "abort",
+  loadSessions: "loadSessions",
+  loadSession: "loadSession",
+  deleteSession: "deleteSession",
   // Host → Webview
   stream: "stream",
   done: "done",
   error: "error",
   config: "config",
   monitorStatus: "monitorStatus",
+  sessionsList: "sessionsList",
+  sessionLoaded: "sessionLoaded",
 } as const;
 
 export const EVENT_KINDS = {
@@ -43,7 +53,7 @@ export const EVENT_KINDS = {
   diagnosticsChange: "diagnostics_change",
 } as const;
 
-export const SURFACES = ["edit", "run", "chat", "debug"] as const;
+export const SURFACES = ["edit", "run", "chat", "debug", "diag"] as const;
 export type Surface = (typeof SURFACES)[number];
 
 export const STORAGE_DIRS = {
