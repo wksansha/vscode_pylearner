@@ -59,9 +59,22 @@ export function createEditListener(writer: L1Writer): vscode.Disposable {
     const oldText = mirrors.get(key) ?? "";
     for (const change of e.contentChanges) {
       const offset = e.document.offsetAt(change.range.start);
+      const before = oldText.slice(offset, offset + change.rangeLength);
+      // Skip keystroke-level noise: single-char insertions (typing) and
+      // single-char deletions (backspace) carry no signal for L2 extraction.
+      // Pure-whitespace changes are filtered again in flush(). Replacements,
+      // multi-char inserts (paste/autocomplete), and block deletions pass.
+      const beforeTrimmed = before.trim();
+      const afterTrimmed = change.text.trim();
+      if (
+        (beforeTrimmed.length <= 1 && afterTrimmed === "") ||
+        (beforeTrimmed === "" && afterTrimmed.length <= 1)
+      ) {
+        continue;
+      }
       batchedChanges.push({
         uri: e.document.uri,
-        before: oldText.slice(offset, offset + change.rangeLength),
+        before,
         after: change.text,
       });
     }
