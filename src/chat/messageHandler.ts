@@ -47,9 +47,8 @@ export async function handleMessage(
         session.messages.push(userMsg);
         await l1Writer.append("chat", "user_message", {
           text: userText,
-          session_id: sessionId,
           model: router.getModelName(),
-        });
+        }, sessionId);
         await chatStore.saveSession(session);
 
         // Convert to LLM format
@@ -95,8 +94,7 @@ export async function handleMessage(
         await l1Writer.append("chat", "assistant_response", {
           text: fullResponse.slice(0, 500),
           model: router.getModelName(),
-          session_id: sessionId,
-        });
+        }, sessionId);
         await chatStore.saveSession(session);
 
         webview.postMessage({

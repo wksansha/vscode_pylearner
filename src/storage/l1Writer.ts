@@ -15,10 +15,11 @@ export class L1Writer {
   async append(
     surface: Surface,
     kind: string,
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    sessionId?: string
   ): Promise<void> {
     const event = makeEvent(surface, kind, payload, () => ulid(), () =>
-      new Date().toISOString()
+      new Date().toISOString(), sessionId
     );
     await this.writeEvent(event);
   }
