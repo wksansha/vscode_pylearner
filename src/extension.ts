@@ -13,6 +13,20 @@ let chatProvider: ChatViewProvider;
 export function activate(context: vscode.ExtensionContext) {
   console.log("Python Learner extension activated");
 
+  try {
+    activateCore(context);
+    console.log("[pylearner] activation complete, listeners registered");
+  } catch (err) {
+    console.error("[pylearner] activation failed:", err);
+    void vscode.window.showErrorMessage(
+      `Python Learner activation failed: ${
+        err instanceof Error ? err.stack ?? err.message : String(err)
+      }`
+    );
+  }
+}
+
+function activateCore(context: vscode.ExtensionContext) {
   // Initialize core services
   const l1Writer = new L1Writer(context.globalStorageUri);
   const chatStore = new ChatStore(context.globalStorageUri);
@@ -20,8 +34,11 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register event listeners
   context.subscriptions.push(createEditListener(l1Writer));
+  console.log("[pylearner] edit listener registered");
   context.subscriptions.push(createRunListener(l1Writer));
+  console.log("[pylearner] run listener registered");
   context.subscriptions.push(createDiagnosticsListener(l1Writer));
+  console.log("[pylearner] diagnostics listener registered");
 
   // Register Chat Webview Provider
   chatProvider = new ChatViewProvider(context, router, l1Writer, chatStore);

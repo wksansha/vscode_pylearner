@@ -23,6 +23,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     _context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken
   ): void {
+    console.log("[pylearner] resolveWebviewView called");
     this._view = webviewView;
 
     webviewView.webview.options = {
