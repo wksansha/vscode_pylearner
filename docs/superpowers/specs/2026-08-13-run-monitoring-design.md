@@ -87,3 +87,38 @@
 - **cmd 终端不支持 shell integration**，不产生任何终端事件（▶ 按钮不受影响，其走内部任务路径）
 - **调试终端（程序化启动的命令）事件可靠**；常规终端依赖上述命令检测
 - PowerShell 5.1 原生参数传递有拆分 quirk（如 `python -c "import sys; sys.exit(3)"` 实际退出码为 1 而非 3）——插件记录的是真实退出码
+
+## 实现演进（2026-08-24）
+
+本 spec 交付后，实现随验证迭代产生以下偏离，均以实测为准：
+
+### 1. 去重架构反转（推翻"集合跳过"规则）
+
+spec 的"终端事件触发时若 debug/task 集合非空则跳过"在实测中失败：**ms-python 的 ▶ 运行是终端 shell execution 先于 task 事件触发**，按集合判断时终端事件被跳过、task 事件正常写，反而漏掉了能读输出的路径。
+
+改为：**终端 shell execution 为主记录路径，task 事件为回退路径**。task 启动时"收养"所有无主终端执行（`tag.task === null` → 归属该 task），配对不再依赖事件先后顺序。task 结束时若已有终端记录（或仍有未结束的配对终端）则跳过。
+
+### 2. 失败运行提取错误信息（超出 spec 非目标）
+
+spec 非目标里排除的"终端输出解析"按需收窄实现：仅对**失败的运行**读取输出尾部（≤2000 字符），提取 `error_type` / `error_message` / `file` / `line`（L2 错误模式分析的必需输入）。成功运行不读输出。
+
+实现要点（实测踩坑）：
+- `TerminalShellExecution.read()` 是**实时流**：必须在 `onDidStartTerminalShellExecution` 里开始消费，结束时再读只能拿到空
+- 输出含 ANSI 转义码（PowerShell 颜色/OSC 序列），正则匹配前需清洗
+- 消费循环需防御性上界（结束标记 + 定期让出事件循环 + chunk 硬上限），防止异常流饿死扩展宿主
+
+### 3. diagnostics 迁入独立 surface `diag`
+
+spec 将 `diagnostics_change` 归入 `edit` 表面。实测诊断事件与编辑事件混写会污染未来 L2 的"编辑模式"提取（两者焦点完全不同）。`SURFACES` 扩为 `["edit", "run", "chat", "debug", "diag"]`。
+
+### 4. `session_id` 提升为顶层字段
+
+chat / debug 事件的 `session_id` 从 payload 移到 TraceEvent 顶层，对齐 DeepTutor 的 TraceEvent 形状（顶层 `session_id` / `turn_id`），便于 L2 按会话聚合。
+
+### 5. edit 噪音过滤
+
+`code_change` 在捕获时过滤单字符插入（打字）与单字符删除（退格）——逐字符事件对 L2 提取是纯噪音。替换、多字符插入（粘贴/补全）、块删除仍记录。
+
+### 6. 教训：proposed API 会导致静默激活失败
+
+曾尝试用 `window.onDidWriteTerminalData` 作输出回退来源，实测该 API 在运行时仅作为 **proposed API**（`terminalDataWriteEvent`）存在：属性访问不抛、**注册监听器时抛**，且错误只在激活中途抛出——后果是视图 Provider 未注册、聊天面板无限转圈。最终彻底移除该依赖。教训：proposed API 的错误发生在**使用点**而非访问点，try/catch 属性访问挡不住；不要依赖 proposed API。
