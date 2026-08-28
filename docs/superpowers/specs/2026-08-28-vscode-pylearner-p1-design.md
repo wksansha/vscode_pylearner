@@ -59,11 +59,12 @@
 每个 surface 一个 Markdown 文件，位于 `globalStorageUri/l2/<surface>.md`。
 
 ```markdown
-# Edit & Run Activities
+# Edit Activities
 
 ## Code Patterns
 - Uses list comprehensions frequently [^1] <!--m_01HZK4AB kind:pattern-->
 - Prefers f-strings over .format() [^1] <!--m_01HZK5CD kind:preference-->
+- Writes docstrings for public functions [^2] <!--m_01HZK6EF kind:habit-->
 
 ## Error Patterns
 - Recursion without base case [^3] <!--m_01HZK7GH kind:weakness-->
@@ -75,7 +76,7 @@
 
 [^1]: edit:01HZK4AB
 [^2]: edit:01HZK5CD
-[^3]: run:01HZK6EF
+[^3]: edit:01HZK7GH
 ```
 
 **结构规则：**
@@ -83,7 +84,7 @@
 - kind 枚举：`pattern | preference | habit | weakness | progress | goal`
 - footnote 格式：`[^N]: <surface>:<trace_id>`
 - HTML comment 锚点：`<!--m_<entry_id> kind:<kind>-->`（可选，便于机器解析）
-- 一级标题固定，二级标题自由
+- 一级标题固定，二级标题自由（LLM 可创建新二级标题，但默认使用 Code Patterns / Error Patterns / Progress）
 
 ### 3.2 L3 画像格式
 
@@ -161,6 +162,12 @@ interface Document {
   footnotes: Map<string, Footnote>;
 }
 
+interface Footnote {
+  id: string;       // ^N
+  surface: string;  // surface name (edit/run/chat/debug/diag)
+  traceId: string;  // trace ID（L2 用），L3 留空
+}
+
 interface Section {
   heading: string;  // 二级标题文本
   entries: Entry[];
@@ -216,7 +223,11 @@ function apply(doc: Document, ops: Op[]): Document;  // 验证失败则不应用
 interface EntitySnapshot {
   surface: Surface;
   entityRefs: string[];  // L1 中的实体 ID
-  // ... surface-specific fields
+  traceCount: number;    // 该 surface 的 trace 总数
+  errorCount?: number;   // run/diag surface 的错误数
+  editLineCount?: number; // edit surface 的编辑行数
+  chatTurnCount?: number; // chat surface 的对话轮数
+  debugStepCount?: number; // debug surface 的单步次数
 }
 
 function computeDiff(
@@ -252,7 +263,7 @@ Layer 1: 参考池限制     — LLM 输出引用必须在 referencePool 中
 Layer 2: validate_fact_refs — 检查每个 Op 的 refs 合法性
 Layer 3: banned-phrase    — 过滤"你已经完全掌握"等过度自信措辞
 Layer 4: Op 验证          — 整批 validate，一个失败全批拒绝
-Layer 5: 预算控制         — 每次"更新画像"最多 N 次 LLM 调用
+Layer 5: 预算控制         — 每次"更新画像"最多 20 次 LLM 调用（5 surfaces × 2 steps × 2 chunks 上限）
 ```
 
 **banned phrases（初始列表，可扩展）：**
@@ -303,6 +314,7 @@ Layer 5: 预算控制         — 每次"更新画像"最多 N 次 LLM 调用
 ```
 
 **REWRITE 安全检查：**
+- 冷启动（无原画像）：跳过长度检查，直接写入
 - 新画像长度 < 70% 原长 → 拒绝（可能丢失内容）
 - frontmatter 的 type/title/created 不变
 - updated 字段更新为当前时间
@@ -335,6 +347,17 @@ ${truncated}`;
 ```
 
 ### 6.1 上下文预算
+
+```typescript
+interface ContextBudget {
+  maxCtx: number;          // 模型最大上下文（token 数）
+  profileRatio: 0.20;      // 画像占 20%
+  historyRatio: 0.45;      // 历史占 45%
+  systemRatio: 0.20;       // 系统提示占 20%
+  responseRatio: 0.15;     // 回答预留 15%
+  readonly profileBudget: number;  // = maxCtx × profileRatio
+}
+```
 
 ```
 ┌──────────────────────────────────────────────────┐
