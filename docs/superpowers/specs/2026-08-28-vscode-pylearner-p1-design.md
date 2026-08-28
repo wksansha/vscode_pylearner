@@ -258,7 +258,29 @@ interface ReferencePool {
   traceIds: Set<string>;
 }
 
-function buildReferencePool(l2Doc: Document, l1TraceIds: string[]): ReferencePool;
+function buildReferencePool(l2Doc: Document, l1TraceIds: string[]): ReferencePool {
+  // 收集文档中所有 entry IDs
+  const entryIds = new Set<string>();
+  const footnoteIds = new Set<string>();
+  
+  for (const [_, entries] of l2Doc.sections) {
+    for (const entry of entries) {
+      entryIds.add(entry.id);
+      // 收集 footnote IDs（如果有）
+      for (const ref of entry.refs) {
+        if (ref.startsWith('^[1-9]')) { // footnote 格式
+          footnoteIds.add(ref);
+        }
+      }
+    }
+  }
+  
+  return {
+    entryIds,
+    footnoteIds,
+    traceIds: new Set(l1TraceIds)
+  };
+}
 ```
 
 ### 4.5 五层防御
@@ -269,6 +291,35 @@ Layer 2: validate_fact_refs — 检查每个 Op 的 refs 合法性
 Layer 3: banned-phrase    — 过滤"你已经完全掌握"等过度自信措辞
 Layer 4: Op 验证          — 整批 validate，一个失败全批拒绝
 Layer 5: 预算控制         — 每次"更新画像"最多 20 次 LLM 调用（5 surfaces × 2 steps × 2 chunks 上限）
+```
+
+**Layer 2: validate_fact_refs 实现**
+```typescript
+function validate_fact_refs(ops: Op[], pool: ReferencePool): ValidationResult {
+  const errors: string[] = [];
+  
+  for (const op of ops) {
+    // 检查所有引用是否在参考池中
+    for (const ref of op.refs) {
+      if (!pool.entryIds.has(ref) && 
+          !pool.footnoteIds.has(ref) && 
+          !pool.traceIds.has(ref) &&
+          !is_shortname_ref(ref)) {
+        errors.push(`Invalid ref: ${ref}`);
+      }
+    }
+    
+    // L2 特殊检查：entry 引用必须有对应 trace 支持
+    if (op.op === "add" || op.op === "edit") {
+      const traceRefs = op.refs.filter(ref => is_trace_id(ref));
+      if (traceRefs.length > 0 && !traceRefs.every(ref => pool.traceIds.has(ref))) {
+        errors.push(`Missing trace support for: ${traceRefs.join(", ")}`);
+      }
+    }
+  }
+  
+  return { valid: errors.length === 0, errors };
+}
 ```
 
 **banned phrases（初始列表，可扩展）：**
@@ -319,16 +370,215 @@ Layer 5: 预算控制         — 每次"更新画像"最多 20 次 LLM 调用�
 ```
 
 **REWRITE 安全检查：**
-- 冷启动（无原画像）：跳过长度检查，直接写入
-- 新画像长度 < 70% 原长 → 拒绝（可能丢失内容）
+- 冷启动（无原画像）：创建最小画像（至少包含 Learning Style/Strengths/Areas for Improvement 三个章节）
+- 新画像长度 < 50% 原长 → 拒绝（可能丢失关键内容）
+- 新画像长度 > 150% 原长 → 截断到预算限制，保留最相关内容
 - frontmatter 的 type/title/created 不变
 - updated 字段更新为当前时间
+- 如果截断，保留所有章节但精简每个章节的内容描述
 
 ---
 
-## 6. 画像注入
+## 6. 错误处理与并发安全
+
+### 6.1 LLM 错误处理
 
 ```typescript
+interface LLMCallConfig {
+  maxRetries: 3;
+  timeoutMs: 30000;
+  fallbackStrategy: "skip" | "use_last" | "error";
+}
+
+interface LLMResult {
+  success: boolean;
+  data?: any;
+  error?: string;
+  retryCount: number;
+}
+
+async function callLLMSafe(
+  prompt: string,
+  config: LLMCallConfig = { maxRetries: 3, timeoutMs: 30000, fallbackStrategy: "skip" }
+): Promise<LLMResult> {
+  let lastError: string;
+  
+  for (let i = 0; i < config.maxRetries; i++) {
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('LLM timeout')), config.timeoutMs)
+      );
+      
+      const result = await Promise.race([
+        llmRouter.call(prompt),
+        timeoutPromise
+      ]);
+      
+      return { success: true, data: result, retryCount: i };
+    } catch (error) {
+      lastError = error.message;
+      if (i === config.maxRetries - 1) break;
+      
+      // 指数退避
+      await new Promise(resolve => 
+        setTimeout(resolve, 1000 * Math.pow(2, i))
+      );
+    }
+  }
+  
+  return { 
+    success: false, 
+    error: lastError,
+    retryCount: config.maxRetries
+  };
+}
+```
+
+### 6.2 并发安全机制
+
+```typescript
+// Surface 级别锁，防止并发更新
+const surfaceLocks = new Map<string, Promise<void>>();
+
+async function withSurfaceLock<T>(
+  surface: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const existingLock = surfaceLocks.get(surface);
+  if (existingLock) {
+    await existingLock;
+  }
+  
+  const newLock = (async () => {
+    try {
+      return await fn();
+    } finally {
+      surfaceLocks.delete(surface);
+    }
+  })();
+  
+  surfaceLocks.set(surface, newLock);
+  return newLock;
+}
+
+// 原子文件写入
+async function writeAtomically(uri: vscode.Uri, content: string): Promise<void> {
+  const tempUri = vscode.Uri.joinPath(uri, `tmp_${Date.now()}.md`);
+  
+  try {
+    // 写入临时文件
+    await vscode.workspace.fs.writeFile(tempUri, Buffer.from(content));
+    
+    // 原子性重命名
+    await vscode.workspace.fs.rename(tempUri, uri, { overwrite: true });
+  } catch (error) {
+    // 清理临时文件
+    try {
+      await vscode.workspace.fs.delete(tempUri);
+    } catch {}
+    throw error;
+  }
+}
+```
+
+---
+
+## 7. 两步思维链详细定义
+
+### 7.1 关键学习信号定义
+
+**信号类型：**
+- `pattern`: 代码模式偏好（如特定语法使用频率）
+- `preference`: 学习风格偏好（如示例优先vs理论优先）
+- `habit`: 编程习惯（如命名规范、注释习惯）
+- `weakness`: 常见错误类型（如特定概念理解偏差）
+- `progress`: 学习进度里程碑
+- `goal`: 明确的学习目标
+
+**信号判断标准：**
+- 出现频率：同一概念在 3+ 个不同事件中重复出现
+- 上下文一致性：在不同场景下表现相同偏好
+- 变化趋势：从错误到正确的行为转变
+- 关联性：多个信号指向同一学习障碍
+
+### 7.2 Relations 字段使用
+
+**Relations 表示：**
+- `supports`: 新信号支持已有认知
+- `contradicts`: 新信号与已有认知冲突
+- `extends`: 新信号深化已有理解
+- `prerequisite`: 新信号是学习其他概念的基础
+
+---
+
+## 8. 画像注入
+
+```typescript
+### 8.1 原子操作时间窗口
+
+**更新画像总时长限制：**
+- 最长总耗时：5 分钟
+- 单个 surface 更新：1 分钟
+- 单个 LLM 调用：30 秒（含重试）
+- 文件 I/O 操作：5 秒
+
+**超时处理：**
+- 超时后取消所有未完成的 LLM 调用
+- 返回部分更新的结果
+- 记录超时日志供后续分析
+
+**重试机制：**
+- 网络错误：立即重试
+- LLM 内部错误：等待 2^n 秒后重试（n=重试次数）
+- 超时错误：直接失败，不重试
+
+### 8.2 智能画像截断策略
+
+**截断优先级：**
+1. 保留所有章节标题
+2. 优先保留 Progress/Strengths（积极反馈）
+3. 次要保留 Areas for Improvement（待改进点）
+4. 最后精简 Preferences（偏好）
+
+**截断算法：**
+```typescript
+function truncateProfile(profileMd: string, maxTokens: number): string {
+  const sections = parseSections(profileMd);
+  let currentLength = 0;
+  const truncated: string[] = [];
+  
+  // 先添加 frontmatter
+  truncated.push(sections.frontmatter);
+  
+  for (const section of sections.content) {
+    // 检查是否包含关键词
+    const isCritical = section.heading.match(/(Strengths|Progress)/i);
+    const isImportant = section.heading.match(/(Areas for Improvement)/i);
+    
+    if (isCritical) {
+      // 完整保留
+      truncated.push(section.content);
+      currentLength += section.tokens;
+    } else if (isImportant) {
+      // 保留前 3 条
+      const entries = section.entries.slice(0, 3);
+      truncated.push(renderSection(section.heading, entries));
+      currentLength += section.tokens * 0.5;
+    } else {
+      // 只保留标题
+      truncated.push(`## ${section.heading}`);
+      currentLength += 10;
+    }
+    
+    if (currentLength > maxTokens) {
+      break;
+    }
+  }
+  
+  return truncated.join('\n\n');
+}
+```
+
 function buildSystemPromptWithProfile(
   baseSystemPrompt: string,
   profileMd: string,
