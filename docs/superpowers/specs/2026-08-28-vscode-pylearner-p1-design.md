@@ -17,7 +17,11 @@
 3. 画像注入（profile.md → 聊天 system prompt）
 4. "更新画像"命令 + 画像预览面板
 
-**不做：** 搜索/向量/图谱/多租户/隐私层
+**不做：** P1 不做，但保留 P1+ 扩展点
+- 搜索/向量/图谱：体量小时用全文搜索，膨胀时再加
+- 多租户/隐私层：单用户无需
+- 四策略混合检索：P1+ 当画像膨胀到需要时
+- Facts 围栏：P1 用自然语言+kind字段，P1+ 考虑结构化
 
 ---
 
@@ -81,7 +85,8 @@
 
 **结构规则：**
 - 每条目：`- <自然语言> [^N] <!--m_<ULID> kind:<kind>-->`
-- kind 枚举：`pattern | preference | habit | weakness | progress | goal`
+- kind 枚举：`pattern | preference | habit | weakness | progress | goal`  
+- P1+ 可扩展：`claim | confidence` → 结构化 Facts 围栏（GBrain 模式）
 - footnote 格式：`[^N]: <surface>:<trace_id>`
 - HTML comment 锚点：`<!--m_<entry_id> kind:<kind>-->`（可选，便于机器解析）
 - 一级标题固定，二级标题自由（LLM 可创建新二级标题，但默认使用 Code Patterns / Error Patterns / Progress）
@@ -435,24 +440,35 @@ interface ContextBudget {
 
 ## 9. P1+ 扩展方向（不做，但记录）
 
-### 9.1 评测方法论
+### 9.1 精确匹配搜索（P1+）
+如果 L2 画像膨胀，添加四策略混合检索：
+- 向量搜索（语义相似度）
+- BM25（关键词匹配，标识符精确查找）
+- RRF（融合得分）
+- 知识图谱查询（未来横向关联 [[wikilink]] 时）
+
+提升场景：代码变量名、函数名精确匹配（`prefers f-strings` 能检索到）。
+
+### 9.2 评测方法论
 
 设计"带画像 vs 不带画像"回答质量基准（类似 GBrain P@5/R@5）。
 P1 收尾时至少做一次非正式评测（5-10 个问题，主观对比），决定 P2 投入方向。
 
-### 9.2 [[wikilink]] 横向关联
+### 9.3 精确匹配搜索（P1+）
 
 给 L2 加事实间横向关联。当前只有纵向脚注（条目→证据），缺少横向（事实↔事实）。
 P2 时如果 AI 回答缺联想能力再加。方案选择：事实量大→GBrain 式正则；量小→LLM 生成双链。
 
-### 9.3 画像可移植性
+### 9.4 画像可移植性
 
 学生换电脑时画像丢失。方案 B（便携导出/导入）优先：
 - "导出画像"命令 → 生成 `.zip`（含 l2/ + l3/ + meta/）
 - "导入画像"命令 → 从 `.zip` 恢复到 globalStorageUri
 - P2+ 可考虑 VS Code Settings Sync 集成（自动漫游）
 
-### 9.4 额外 L3 槽位
+### 9.5 Markdown 灾难恢复
+
+### 9.6 额外 L3 槽位
 
 顶层设计定义了 4 个 L3 槽位（recent/profile/scope/preferences）。P1 只做 profile，其余渐进。
 
