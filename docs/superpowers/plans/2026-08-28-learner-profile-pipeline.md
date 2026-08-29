@@ -1,5 +1,12 @@
 # Learner Profile Pipeline Implementation Plan
 
+> **Status: superseded by the actual implementation.** This plan describes the
+> original mock-based structure (`src/consolidator/…`, `analyzeL2`/`generateL2`).
+> The shipped pipeline lives in `src/memory/` (`update.ts` + `dedup.ts` +
+> `merge.ts` + `lineDoc.ts`), with wiring in `src/commands/`. See
+> [2026-08-29-remaining-work.md](./2026-08-29-remaining-work.md) for the current
+> state and what's left.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the L1→L2→L3 learner profile pipeline with atomic ops, two-step thought chain, and profile injection.
