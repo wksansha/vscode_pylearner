@@ -6,15 +6,16 @@
 // generated profile.md in the editor as a preview.
 
 import * as vscode from "vscode";
-import { CMD_IDS, SURFACES } from "../constants";
+import { CMD_IDS, SECRET_KEYS, SURFACES } from "../constants";
 import type { LlmRouter } from "../llm/router";
+import { callLlmWithRetry } from "../llm/retry";
 import * as store from "../memory/store";
 import { l3File } from "../memory/paths";
 import { updateL2, updateL3, type ConsolidatorDeps } from "../memory/update";
 import type { Document } from "../memory/document";
 import { readTraceEntities } from "../snapshot/reader";
 
-function makeDeps(storageUri: vscode.Uri, router: LlmRouter): ConsolidatorDeps {
+function makeDeps(storageUri: vscode.Uri, router: LlmRouter, apiKey: string): ConsolidatorDeps {
   return {
     readEntities: (surface) => readTraceEntities(storageUri, surface),
     loadAllL2Docs: async () => {
@@ -33,36 +34,48 @@ function makeDeps(storageUri: vscode.Uri, router: LlmRouter): ConsolidatorDeps {
     saveL2Doc: (surface, doc) => store.saveL2Doc(storageUri, surface, doc),
     loadL3Doc: (slot) => store.loadL3Doc(storageUri, slot),
     saveL3Doc: (slot, doc) => store.saveL3Doc(storageUri, slot, doc),
-    callLlm: (system, user) => completeViaRouter(router, system, user),
+    callLlm: (system, user) => completeViaRouter(router, apiKey, system, user),
   };
 }
 
 /** Collect the streamed chunks from a router backend into one response string. */
 async function completeViaRouter(
   router: LlmRouter,
+  apiKey: string,
   system: string,
   user: string
 ): Promise<string> {
-  const backend = router.resolve();
-  const chunks: string[] = [];
-  const controller = new AbortController();
-  await backend.chat(
-    [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    (text) => chunks.push(text),
-    controller.signal
-  );
-  return chunks.join("");
+  const backend = router.resolve(apiKey);
+  const result = await callLlmWithRetry(async (signal) => {
+    const chunks: string[] = [];
+    await backend.chat(
+      [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      (text) => chunks.push(text),
+      signal
+    );
+    return chunks.join("");
+  });
+
+  if (!result.ok) {
+    const prefix = result.timedOut
+      ? `LLM call timed out after ${result.attempts} attempt(s)`
+      : `LLM call failed after ${result.attempts} attempt(s)`;
+    throw new Error(`${prefix}: ${result.error}`);
+  }
+  return result.text;
 }
 
 /** Run the full L1→L2→L3 pipeline: every L2 surface, then the profile L3 slot. */
 export async function runProfileUpdate(
   storageUri: vscode.Uri,
+  secrets: vscode.SecretStorage,
   router: LlmRouter
 ): Promise<void> {
-  const deps = makeDeps(storageUri, router);
+  const apiKey = (await secrets.get(SECRET_KEYS.llmApiKey)) ?? "";
+  const deps = makeDeps(storageUri, router, apiKey);
   for (const surface of SURFACES) {
     await updateL2(deps, surface);
   }
@@ -82,7 +95,7 @@ export function registerUpdateProfileCommand(
       },
       async () => {
         try {
-          await runProfileUpdate(context.globalStorageUri, router);
+          await runProfileUpdate(context.globalStorageUri, context.secrets, router);
 
           // Open the profile as a preview.
           const profileUri = l3File(context.globalStorageUri, "profile");

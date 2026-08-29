@@ -74,7 +74,12 @@ export class ProfileViewProvider implements vscode.WebviewViewProvider {
           title: "Updating learner profile…",
           cancellable: false,
         },
-        async () => runProfileUpdate(this.context.globalStorageUri, this.router)
+        async () =>
+          runProfileUpdate(
+            this.context.globalStorageUri,
+            this.context.secrets,
+            this.router
+          )
       );
     } catch (err) {
       await this._view.webview.postMessage({
