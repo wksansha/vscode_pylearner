@@ -34,14 +34,14 @@ async function readJson(uri: vscode.Uri): Promise<unknown> {
 async function writeTextAtomic(uri: vscode.Uri, text: string): Promise<void> {
   await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(uri, ".."));
   const tmp = vscode.Uri.parse(uri.toString() + ".tmp");
-  await vscode.workspace.fs.writeFile(tmp, encoder.encode(text));
   try {
-    // vscode.workspace.fs has no atomic rename; emulate by writing tmp then
-    // replacing. On the same filesystem this is effectively atomic.
-    await vscode.workspace.fs.writeFile(uri, encoder.encode(text));
-    await vscode.workspace.fs.delete(tmp);
+    await vscode.workspace.fs.writeFile(tmp, encoder.encode(text));
+    // Write to a sibling temp file, then rename over the target. rename is
+    // atomic on the same filesystem, so a crash mid-write leaves either the
+    // old bytes or the new bytes — never a half-written doc.
+    await vscode.workspace.fs.rename(tmp, uri, { overwrite: true });
   } catch {
-    // If the final write failed, best-effort remove the temp file.
+    // If the rename failed, best-effort remove the temp file.
     try {
       await vscode.workspace.fs.delete(tmp);
     } catch {}
