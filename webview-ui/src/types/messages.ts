@@ -29,6 +29,12 @@ export interface StoredMessage {
   model?: string;
 }
 
+export interface ProfileSnapshot {
+  exists: boolean;
+  markdown: string;
+  updatedAt: string | null;
+}
+
 export type WebviewMessage =
   | { type: "chat"; text: string; sessionId: string }
   | { type: "getConfig" }
@@ -36,7 +42,9 @@ export type WebviewMessage =
   | { type: "abort" }
   | { type: "loadSessions" }
   | { type: "loadSession"; sessionId: string }
-  | { type: "deleteSession"; sessionId: string };
+  | { type: "deleteSession"; sessionId: string }
+  | { type: "getProfile" }
+  | { type: "updateProfile" };
 
 export type HostMessage =
   | { type: "stream"; chunk: string; sessionId: string }
@@ -45,4 +53,5 @@ export type HostMessage =
   | { type: "config"; config: LlmConfig }
   | { type: "newChat" }
   | { type: "sessionsList"; sessions: ChatSessionSummary[] }
-  | { type: "sessionLoaded"; sessionId: string; messages: StoredMessage[] };
+  | { type: "sessionLoaded"; sessionId: string; messages: StoredMessage[] }
+  | { type: "profile"; snapshot: ProfileSnapshot };

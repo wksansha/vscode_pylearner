@@ -7,6 +7,12 @@
   --vscode-fg: var(--vscode-sideBar-foreground, #cccccc);
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   background-color: var(--vscode-bg);
   color: var(--vscode-fg);

@@ -6,6 +6,18 @@ import type { ChatStore } from "../storage/chatStore";
 import type { ChatSession, Message } from "../storage/chatStore";
 import { getConfig } from "../settings/config";
 import { MSG_TYPES, SECRET_KEYS } from "../constants";
+import { loadL3Doc } from "../memory/store";
+import { serialize } from "../memory/document";
+import { injectProfile } from "../memory/profileInjector";
+
+const BASE_SYSTEM_PROMPT =
+  "You are a helpful Python learning assistant. Provide clear, concise explanations with code examples when relevant.";
+
+/** Load the L3 learner profile as markdown, or null when not yet synthesized. */
+async function loadProfileMd(storageUri: vscode.Uri): Promise<string | null> {
+  const doc = await loadL3Doc(storageUri, "profile");
+  return doc ? serialize(doc) : null;
+}
 
 export async function handleMessage(
   payload: Record<string, unknown>,
@@ -14,7 +26,8 @@ export async function handleMessage(
   router: LlmRouter,
   l1Writer: L1Writer,
   chatStore: ChatStore,
-  abortRef: { current: AbortController | null }
+  abortRef: { current: AbortController | null },
+  storageUri: vscode.Uri
 ): Promise<void> {
   try {
     switch (payload.type) {
@@ -57,11 +70,11 @@ export async function handleMessage(
           content: m.text,
         }));
 
-        // System prompt
+        // System prompt — inject the learner profile (if any) to personalize.
+        const profileMd = await loadProfileMd(storageUri);
         llmMessages.unshift({
           role: "system" as const,
-          content:
-            "You are a helpful Python learning assistant. Provide clear, concise explanations with code examples when relevant.",
+          content: injectProfile(BASE_SYSTEM_PROMPT, profileMd),
         });
 
         // Stream response

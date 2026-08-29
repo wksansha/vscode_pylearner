@@ -44,7 +44,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.router,
         this.l1Writer,
         this.chatStore,
-        this.abortRef
+        this.abortRef,
+        this.context.globalStorageUri
       );
     });
   }
@@ -77,7 +78,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <div id="root"></div>
-  <script src="${scriptUri}"></script>
+  <script type="module" src="${scriptUri}"></script>
 </body>
 </html>`;
   }

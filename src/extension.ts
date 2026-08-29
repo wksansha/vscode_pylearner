@@ -4,9 +4,11 @@ import { L1Writer } from "./storage/l1Writer";
 import { ChatStore } from "./storage/chatStore";
 import { LlmRouter } from "./llm/router";
 import { ChatViewProvider } from "./chat/chatProvider";
+import { ProfileViewProvider } from "./chat/profileViewProvider";
 import { createEditListener } from "./events/editListener";
 import { createRunListener } from "./events/runListener";
 import { createDiagnosticsListener } from "./events/diagnosticsListener";
+import { registerUpdateProfileCommand } from "./commands/updateProfile";
 
 let chatProvider: ChatViewProvider;
 
@@ -50,6 +52,17 @@ function activateCore(context: vscode.ExtensionContext) {
     )
   );
 
+  // Register Learner Profile webview view
+  const profileProvider = new ProfileViewProvider(context, router);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      VIEW_IDS.profileView,
+      profileProvider,
+      { webviewOptions: { retainContextWhenHidden: true } }
+    )
+  );
+  console.log("[pylearner] profile view provider registered");
+
   // Register commands
   context.subscriptions.push(
     vscode.commands.registerCommand(CMD_IDS.openChat, () => {
@@ -88,6 +101,9 @@ function activateCore(context: vscode.ExtensionContext) {
       );
     })
   );
+
+  context.subscriptions.push(registerUpdateProfileCommand(context, router));
+  console.log("[pylearner] update-profile command registered");
 }
 
 export function deactivate() {

@@ -8,7 +8,10 @@
   "engines": {
     "vscode": "^1.96.0"
   },
-  "categories": ["Education", "Machine Learning"],
+  "categories": [
+    "Education",
+    "Machine Learning"
+  ],
   "activationEvents": [
     "onLanguage:python"
   ],
@@ -29,6 +32,11 @@
           "type": "webview",
           "id": "pylearner.chatView",
           "name": "Chat"
+        },
+        {
+          "type": "webview",
+          "id": "pylearner.profileView",
+          "name": "Profile"
         }
       ]
     },
@@ -48,6 +56,10 @@
       {
         "command": "pylearner.openSettings",
         "title": "Python Learner: Settings"
+      },
+      {
+        "command": "pylearner.updateProfile",
+        "title": "Python Learner: Update Learner Profile"
       }
     ],
     "configuration": {
@@ -56,7 +68,11 @@
         "pylearner.llm.provider": {
           "type": "string",
           "default": "vscode-lm",
-          "enum": ["vscode-lm", "ollama", "openai"],
+          "enum": [
+            "vscode-lm",
+            "ollama",
+            "openai"
+          ],
           "description": "LLM provider for chat"
         },
         "pylearner.llm.model": {
@@ -87,13 +103,16 @@
     "compile": "node esbuild.config.js",
     "watch": "node esbuild.config.js --watch",
     "build:webview": "cd webview-ui && npm run build",
-    "lint": "eslint src --ext ts"
+    "lint": "eslint src --ext ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
+    "@types/node": "^20.14.0",
     "@types/vscode": "^1.96.0",
     "esbuild": "^0.21.0",
     "typescript": "^5.5.0",
-    "@types/node": "^20.14.0"
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "ulidx": "^1.0.0"

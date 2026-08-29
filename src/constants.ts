@@ -3,11 +3,13 @@ export const CMD_IDS = {
   newChat: "pylearner.newChat",
   toggleMonitor: "pylearner.toggleMonitor",
   openSettings: "pylearner.openSettings",
+  updateProfile: "pylearner.updateProfile",
 } as const;
 
 export const VIEW_IDS = {
   sidebarContainer: "pylearner-sidebar",
   chatView: "pylearner.chatView",
+  profileView: "pylearner.profileView",
 } as const;
 
 export const CONFIG_KEYS = {
@@ -41,6 +43,11 @@ export const MSG_TYPES = {
   monitorStatus: "monitorStatus",
   sessionsList: "sessionsList",
   sessionLoaded: "sessionLoaded",
+  // Profile panel (Webview → Host)
+  getProfile: "getProfile",
+  updateProfile: "updateProfile",
+  // Profile panel (Host → Webview)
+  profile: "profile",
 } as const;
 
 export const EVENT_KINDS = {
