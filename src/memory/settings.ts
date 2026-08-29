@@ -19,10 +19,26 @@ export interface ReferenceSettings {
   dropInvalidRefs: boolean;
 }
 
+export interface DedupSettings {
+  /** Upper bound on dedup passes per run (early-stops when the LLM returns no edits). */
+  iterations: number;
+  /** Run dedup automatically after a successful update that added facts. */
+  autoAfterUpdate: boolean;
+}
+
+export interface MergeSettings {
+  /** Run the no-LLM footnote-consolidation pass after update. */
+  autoAfterUpdate: boolean;
+  /** Run merge automatically after a dedup pass. */
+  autoAfterDedup: boolean;
+}
+
 export interface MemorySettings {
   update: { l2Budget: number; l3Budget: number };
   chunking: ChunkingSettings;
   reference: ReferenceSettings;
+  dedup: DedupSettings;
+  merge: MergeSettings;
 }
 
 export const MEMORY_SETTINGS: MemorySettings = {
@@ -34,6 +50,8 @@ export const MEMORY_SETTINGS: MemorySettings = {
     maxChunkChars: 64000,
   },
   reference: { enforceRequired: true, dropInvalidRefs: true },
+  dedup: { iterations: 3, autoAfterUpdate: true },
+  merge: { autoAfterUpdate: true, autoAfterDedup: true },
 };
 
 export interface AutoRefreshSettings {

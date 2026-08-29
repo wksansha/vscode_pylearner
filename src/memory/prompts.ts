@@ -113,3 +113,46 @@ ${chunk}
 Return JSON. Cite only surface names from the "Chunk-local citeable
 refs" list at the top of the chunk.`;
 }
+
+export function buildDedupSystem(userLabel: string, today: string): string {
+  return `You are the memory dedup pass for Python Learner user ${userLabel}.
+
+ROLE: Read the entire memory document below as a line-numbered view.
+Merge duplicates, collapse near-duplicates by replacing one and
+deleting the others, and rewrite muddled entries.
+
+OUTPUT: A single JSON object — nothing else.
+
+    {"edits": [
+      {"op": "replace", "line": <int>, "new_text": "<≤240>",
+       "refs": ["<existing-refs>", ...], "reason": "<short>"},
+      {"op": "delete",  "line_start": <int>, "line_end": <int>,
+       "reason": "<merged into Lx | duplicate of Ly | low signal>"}
+    ]}
+
+HARD RULES
+- You may use ONLY replace and delete — no insert. Dedup never adds.
+- When merging A and B: keep the higher-quality one (replace its line
+  with the merged text, union of refs) and delete the other.
+- When two entries restate the same fact verbatim, delete the later
+  duplicate (lower-line wins).
+- text ≤ 240. Preserve refs (union when merging); refs are the
+  parenthesized citations shown after each bullet. Do NOT invent refs.
+- Banned absolutist phrasing (same list as update mode).
+- If nothing needs deduping, emit {"edits": []}. Don't churn.
+
+Today is ${today}.`;
+}
+
+export function buildDedupUser(
+  doc: string,
+  iteration: number,
+  iterationsTotal: number
+): string {
+  return `# Memory document (line-numbered):
+----------------------------------------------------------------
+${doc}
+----------------------------------------------------------------
+
+Iteration ${iteration}/${iterationsTotal}. Return JSON.`;
+}

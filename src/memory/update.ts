@@ -16,9 +16,11 @@
 import type { Surface } from "../constants";
 import type { Entity } from "../snapshot/entity";
 import { chunkWithBoundary } from "./chunker";
+import { runDedup, type DedupDeps } from "./dedup";
 import { Document, serialize } from "./document";
 import type { Entry } from "./document";
 import { hasBanned } from "./guards";
+import { runMerge, type MergeDeps } from "./merge";
 import type { L2Meta, L3Meta } from "./meta";
 import { apply } from "./ops";
 import type { AddOp } from "./ops";
@@ -85,6 +87,12 @@ export async function updateL2(
 
   if (newEntities.length === 0) {
     await deps.saveL2Meta(surface, { last_update_at: nowIso(), seen_entity_refs: [...seenNow] });
+    // Merge still runs on a no-op update: a doc in the legacy footnote
+    // layout (or with stale L3 refs) should be cleaned up even when no new
+    // facts were synthesized.
+    if (MEMORY_SETTINGS.merge.autoAfterUpdate) {
+      await runMerge(modeDeps(deps), "L2", surface);
+    }
     emit(deps, { stage: "done", no_new_input: true, facts_added: 0 });
     return emptyResult("L2", surface, true);
   }
@@ -153,6 +161,16 @@ export async function updateL2(
   }
 
   await deps.saveL2Meta(surface, { last_update_at: nowIso(), seen_entity_refs: [...seenNow] });
+
+  // Post-update passes: collapse newly-accumulated duplicates, then
+  // re-serialize footnotes (and migrate any legacy L3 refs for L3 only).
+  if (MEMORY_SETTINGS.dedup.autoAfterUpdate && factsAdded > 0) {
+    await runDedup(modeDeps(deps), "L2", surface, { userLabel });
+  }
+  if (MEMORY_SETTINGS.merge.autoAfterUpdate) {
+    await runMerge(modeDeps(deps), "L2", surface);
+  }
+
   emit(deps, { stage: "done", facts_added: factsAdded, refs_dropped: refsDropped, chunks_processed: chunks.length });
   return { layer: "L2", key: surface, chunksProcessed: chunks.length, factsAdded, refsDropped, newEntryIds, noNewInput: false };
 }
@@ -187,6 +205,9 @@ export async function updateL3(
 
   if (newCount === 0) {
     await deps.saveL3Meta(slot, { last_update_at: nowIso(), seen_l2_entry_ids: seenNow });
+    if (MEMORY_SETTINGS.merge.autoAfterUpdate) {
+      await runMerge(modeDeps(deps), "L3", slot);
+    }
     emit(deps, { stage: "done", no_new_input: true, facts_added: 0 });
     return emptyResult("L3", slot, true);
   }
@@ -247,6 +268,14 @@ export async function updateL3(
   }
 
   await deps.saveL3Meta(slot, { last_update_at: nowIso(), seen_l2_entry_ids: seenNow });
+
+  if (MEMORY_SETTINGS.dedup.autoAfterUpdate && factsAdded > 0) {
+    await runDedup(modeDeps(deps), "L3", slot, { userLabel });
+  }
+  if (MEMORY_SETTINGS.merge.autoAfterUpdate) {
+    await runMerge(modeDeps(deps), "L3", slot);
+  }
+
   emit(deps, { stage: "done", facts_added: factsAdded, refs_dropped: refsDropped, chunks_processed: chunks.length });
   return { layer: "L3", key: slot, chunksProcessed: chunks.length, factsAdded, refsDropped, newEntryIds, noNewInput: false };
 }
@@ -318,6 +347,22 @@ function emit(deps: ConsolidatorDeps, event: Record<string, unknown>): void {
   } catch {
     // event consumer failures never abort a run
   }
+}
+
+/** Adapt the (surface/slot)-keyed consolidator deps to the (layer,key)-keyed
+ *  deps used by the dedup/merge passes. */
+function modeDeps(deps: ConsolidatorDeps): DedupDeps & MergeDeps {
+  return {
+    loadDoc: (layer, key) =>
+      layer === "L2" ? deps.loadL2Doc(key as Surface) : deps.loadL3Doc(key as L3Slot),
+    saveDoc: (layer, key, doc) =>
+      layer === "L2"
+        ? deps.saveL2Doc(key as Surface, doc)
+        : deps.saveL3Doc(key as L3Slot, doc),
+    loadAllL2Docs: deps.loadAllL2Docs,
+    callLlm: deps.callLlm,
+    onEvent: deps.onEvent,
+  };
 }
 
 function nowIso(): string {
