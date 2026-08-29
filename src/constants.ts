@@ -4,6 +4,7 @@ export const CMD_IDS = {
   toggleMonitor: "pylearner.toggleMonitor",
   openSettings: "pylearner.openSettings",
   updateProfile: "pylearner.updateProfile",
+  memoryGraph: "pylearner.memoryGraph",
 } as const;
 
 export const VIEW_IDS = {
@@ -50,6 +51,10 @@ export const MSG_TYPES = {
   updateProfile: "updateProfile",
   // Profile panel (Host → Webview)
   profile: "profile",
+  // Memory graph (Webview → Host)
+  getMemoryGraph: "getMemoryGraph",
+  // Memory graph (Host → Webview)
+  memoryGraphData: "memoryGraphData",
 } as const;
 
 export const EVENT_KINDS = {

@@ -60,6 +60,10 @@
       {
         "command": "pylearner.updateProfile",
         "title": "Python Learner: Update Learner Profile"
+      },
+      {
+        "command": "pylearner.memoryGraph",
+        "title": "Python Learner: Memory Graph"
       }
     ],
     "configuration": {

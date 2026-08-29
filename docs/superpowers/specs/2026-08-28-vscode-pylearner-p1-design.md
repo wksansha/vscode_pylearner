@@ -766,6 +766,53 @@ globalStorageUri/
 
 ## 附录 B：L2 → L3 引用链
 
+### B.1 三套独立的 id
+
+三层各自有独立的 id，不是同一套：
+
+| 层 | 数据 | id 形式 | 生成时机 |
+|----|------|---------|----------|
+| L1 事件 | 一条原始记录（"用户问了怎么合并 dict"） | `surface:ULID`，如 `chat:01HZK4AAA` | P0 记录事件那一刻 |
+| L2 事实 | 一条提炼事实（"用户对 dict 合并不熟"） | `m_ULID`，如 `m_01HZK5BBB` | L2 合并时 `newEntryId()` |
+| L3 主张 | 一条画像断言（"dict 操作处于练习阶段"） | `m_ULID`，如 `m_01HZK6CCC` | L3 合并时 `newEntryId()` |
+
+`m_xxx` **不是** L1 的 id——前缀都不同：L1 是 `surface:ULID`，L2/L3 条目是 `m_ULID`。
+
+一个真实的 L2 文件（chat.md，serialize 后）：
+
+```
+# chat memory
+
+## Topics
+- 问过 dict 合并 [^1] <!--m_01HZK5BBB-->
+
+---
+
+[^1]: chat:01HZK4AAA
+```
+
+一条 L2 事实上有**两个 id 概念**，别混：
+
+1. `m_01HZK5BBB` —— 这条 L2 事实**自己的 id**，藏在行尾 `<!--...-->` 锚点里，delete/edit 靠它定位这条事实。
+2. `chat:01HZK4AAA` —— 这条事实**引用的 L1 事件 id**，footnote `[^1]` 指向它，意思是"这条事实从 chat 的 01HZK4AAA 事件提炼而来"。
+
+### B.2 id 会变吗
+
+- **L1 的 id（`chat:01HZK4AAA`）：永不变。** L1 是 append-only JSONL，事件写定即定型。
+- **L2/L3 的 m_xxx：增量追加时稳定，重建时变。** 正常增量 append 时新条目生成新 m_xxx、旧条目不动；但删掉 md 文件重新跑合并会生成全新的 m_xxx——m_ 后那段 ULID 是"当前时间戳 + 随机数"，每调一次 `newEntryId()` 都是全新值，与 L1 id 无任何派生关系。
+
+### B.3 为什么 L3 用 surface 粒度（而非条目粒度）
+
+L3 的 refs 是**裸 surface 名**（如 `chat`），指向 L2 文件而非具体条目。这是从 DeepTutor 源码有意保留的设计（`update.py` 注释原话：`Per-entry-id provenance was explicitly dropped`）。三个原因：
+
+1. **防出处复制（最根本）**：`render_l2_entries_for_concat` 只输出 surface 头 + 事实文字，刻意不暴露 L2 条目的 `m_xxx` id。作者明确要求 L3 的 LLM "看不到、也不许复制" L2 的 footnote 出处。若暴露 `@entry m_xxx` 标记，模型会照抄（甚至幻觉）这些 id，把"综合层"变成"高级事实搬运层"，破坏 L3 是"跨 surface 抽象"的语义。
+
+2. **干净的审计链**：L3 → L2 文件 → L1 原始痕迹是"两跳、每跳可人工核查"的链。每条 L3 断言只引用 surface（= 一个 L2 文件），profile.md 文末 footnote 很短（所谓的"干净的 7-footnote 链"）；若引用具体 m_xxx 会膨胀成几十上百条。
+
+3. **综合层语义**：L3 的断言应绑定"哪个 surface 支持我"，而非"哪几条具体事实支持我"。绑定到具体条目会让 L3 失去"综合/抽象"的职责，退化成"L2 的高级复述"。
+
+引用链：
+
 ```
 L3 profile.md
   └─ footnote → surface name (edit/run/chat/debug/diag)
@@ -774,4 +821,4 @@ L3 profile.md
               └─ L1 <surface>.jsonl (具体事件)
 ```
 
-三层引用链保证画像中每条断言可追溯到原始事件。
+三层引用链保证画像中每条断言可追溯到原始事件。surface 粒度的代价是 L3→L2 无法精确定位到具体事实，用"两跳人工核查"弥补：P2 的 memoryGraph 面板把第二跳（在 L2 文件里翻 footnote）做成了"点一下"。

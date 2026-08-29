@@ -35,6 +35,28 @@ export interface ProfileSnapshot {
   updatedAt: string | null;
 }
 
+export type GraphLayer = "L3" | "L2" | "L1";
+
+export interface GraphNode {
+  id: string;
+  layer: GraphLayer;
+  key: string;
+  section?: string;
+  text: string;
+  label?: string;
+  refs: string[];
+}
+
+export interface GraphEdge {
+  from: string;
+  to: string;
+}
+
+export interface CitationGraph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
 export type WebviewMessage =
   | { type: "chat"; text: string; sessionId: string }
   | { type: "getConfig" }
@@ -44,7 +66,8 @@ export type WebviewMessage =
   | { type: "loadSession"; sessionId: string }
   | { type: "deleteSession"; sessionId: string }
   | { type: "getProfile" }
-  | { type: "updateProfile" };
+  | { type: "updateProfile" }
+  | { type: "getMemoryGraph" };
 
 export type HostMessage =
   | { type: "stream"; chunk: string; sessionId: string }
@@ -54,4 +77,5 @@ export type HostMessage =
   | { type: "newChat" }
   | { type: "sessionsList"; sessions: ChatSessionSummary[] }
   | { type: "sessionLoaded"; sessionId: string; messages: StoredMessage[] }
-  | { type: "profile"; snapshot: ProfileSnapshot };
+  | { type: "profile"; snapshot: ProfileSnapshot }
+  | { type: "memoryGraphData"; graph: CitationGraph };

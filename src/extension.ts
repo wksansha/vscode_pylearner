@@ -10,6 +10,7 @@ import { createRunListener } from "./events/runListener";
 import { createDiagnosticsListener } from "./events/diagnosticsListener";
 import { registerUpdateProfileCommand } from "./commands/updateProfile";
 import { ProfileRefresher } from "./commands/autoRefresh";
+import { registerMemoryGraphCommand } from "./commands/memoryGraph";
 
 let chatProvider: ChatViewProvider;
 
@@ -110,6 +111,9 @@ function activateCore(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(registerUpdateProfileCommand(context, router));
   console.log("[pylearner] update-profile command registered");
+
+  context.subscriptions.push(registerMemoryGraphCommand(context));
+  console.log("[pylearner] memory-graph command registered");
 
   // Lazy background refresh shortly after activation, so a user who has been
   // coding without opening chat still gets a fresh profile. Fire-and-forget;
