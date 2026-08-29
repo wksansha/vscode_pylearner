@@ -94,6 +94,18 @@
           "type": "boolean",
           "default": true,
           "description": "Monitor Python script execution"
+        },
+        "pylearner.memory.autoRefreshThreshold": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "description": "Min new learning events before the profile auto-refreshes in the background"
+        },
+        "pylearner.memory.autoRefreshCooldownMs": {
+          "type": "number",
+          "default": 300000,
+          "minimum": 0,
+          "description": "Min interval (ms) between automatic background profile refreshes"
         }
       }
     }

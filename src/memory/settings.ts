@@ -36,6 +36,32 @@ export const MEMORY_SETTINGS: MemorySettings = {
   reference: { enforceRequired: true, dropInvalidRefs: true },
 };
 
+export interface AutoRefreshSettings {
+  /** Min new L1 events (across surfaces) before a background refresh fires. */
+  minNewEntities: number;
+  /** Min interval (ms) between automatic background refreshes. */
+  cooldownMs: number;
+}
+
+export const DEFAULT_AUTO_REFRESH: AutoRefreshSettings = {
+  minNewEntities: 20,
+  cooldownMs: 300_000,
+};
+
+/**
+ * Pure gate for the lazy background refresh: fire only once there is enough
+ * new material AND enough time since the last run. `elapsedMs` is measured
+ * since the previous refresh, so a fresh session (never run) has a large
+ * value and only the threshold matters.
+ */
+export function shouldAutoRefresh(
+  newCount: number,
+  elapsedMs: number,
+  cfg: AutoRefreshSettings
+): boolean {
+  return newCount >= cfg.minNewEntities && elapsedMs >= cfg.cooldownMs;
+}
+
 export interface SurfaceFocus {
   focus: string;
   sections: string[];

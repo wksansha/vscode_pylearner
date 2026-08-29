@@ -27,13 +27,18 @@ export async function handleMessage(
   l1Writer: L1Writer,
   chatStore: ChatStore,
   abortRef: { current: AbortController | null },
-  storageUri: vscode.Uri
+  storageUri: vscode.Uri,
+  maybeRefresh: () => Promise<void>
 ): Promise<void> {
   try {
     switch (payload.type) {
       case MSG_TYPES.chat: {
         const userText = payload.text as string;
         if (!userText?.trim()) return;
+
+        // Kick off a background profile refresh (fire-and-forget). Threshold +
+        // cooldown are enforced inside the refresher, so this is cheap.
+        void maybeRefresh();
 
         // Refresh router config; the API key comes from SecretStorage so it
         // never touches settings.json (Settings Sync would leak it).

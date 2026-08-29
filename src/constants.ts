@@ -18,6 +18,8 @@ export const CONFIG_KEYS = {
   llmBaseUrl: "pylearner.llm.baseUrl",
   monitorEdit: "pylearner.monitor.editEnabled",
   monitorRun: "pylearner.monitor.runEnabled",
+  autoRefreshThreshold: "pylearner.memory.autoRefreshThreshold",
+  autoRefreshCooldownMs: "pylearner.memory.autoRefreshCooldownMs",
 } as const;
 
 // API key lives in SecretStorage (never in settings.json — Settings Sync

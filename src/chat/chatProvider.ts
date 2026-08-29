@@ -4,6 +4,7 @@ import { handleMessage } from "./messageHandler";
 import type { LlmRouter } from "../llm/router";
 import type { L1Writer } from "../storage/l1Writer";
 import type { ChatStore } from "../storage/chatStore";
+import type { ProfileRefresher } from "../commands/autoRefresh";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
@@ -15,7 +16,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly context: vscode.ExtensionContext,
     private readonly router: LlmRouter,
     private readonly l1Writer: L1Writer,
-    private readonly chatStore: ChatStore
+    private readonly chatStore: ChatStore,
+    private readonly refresher: ProfileRefresher
   ) {}
 
   resolveWebviewView(
@@ -45,7 +47,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.l1Writer,
         this.chatStore,
         this.abortRef,
-        this.context.globalStorageUri
+        this.context.globalStorageUri,
+        () => this.refresher.maybeRefresh()
       );
     });
   }

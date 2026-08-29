@@ -9,6 +9,7 @@ import { createEditListener } from "./events/editListener";
 import { createRunListener } from "./events/runListener";
 import { createDiagnosticsListener } from "./events/diagnosticsListener";
 import { registerUpdateProfileCommand } from "./commands/updateProfile";
+import { ProfileRefresher } from "./commands/autoRefresh";
 
 let chatProvider: ChatViewProvider;
 
@@ -33,6 +34,11 @@ function activateCore(context: vscode.ExtensionContext) {
   const l1Writer = new L1Writer(context.globalStorageUri);
   const chatStore = new ChatStore(context.globalStorageUri);
   const router = new LlmRouter();
+  const refresher = new ProfileRefresher(
+    context.globalStorageUri,
+    context.secrets,
+    router
+  );
 
   // Register event listeners
   context.subscriptions.push(createEditListener(l1Writer));
@@ -43,7 +49,7 @@ function activateCore(context: vscode.ExtensionContext) {
   console.log("[pylearner] diagnostics listener registered");
 
   // Register Chat Webview Provider
-  chatProvider = new ChatViewProvider(context, router, l1Writer, chatStore);
+  chatProvider = new ChatViewProvider(context, router, l1Writer, chatStore, refresher);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       VIEW_IDS.chatView,
@@ -104,6 +110,12 @@ function activateCore(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(registerUpdateProfileCommand(context, router));
   console.log("[pylearner] update-profile command registered");
+
+  // Lazy background refresh shortly after activation, so a user who has been
+  // coding without opening chat still gets a fresh profile. Fire-and-forget;
+  // threshold + cooldown are enforced inside the refresher.
+  const refreshTimer = setTimeout(() => void refresher.maybeRefresh(), 5000);
+  context.subscriptions.push({ dispose: () => clearTimeout(refreshTimer) });
 }
 
 export function deactivate() {
