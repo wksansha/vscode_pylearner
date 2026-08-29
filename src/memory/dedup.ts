@@ -35,6 +35,9 @@ export interface DedupResult {
   key: string;
   iterationsRun: number;
   editsApplied: number;
+  /** Replaces where the LLM omitted refs and the engine preserved the
+   *  entry's existing citations (provenance-preserving fallback). */
+  refsPreserved: number;
   convergedEarly: boolean;
   noDoc: boolean;
 }
@@ -57,11 +60,20 @@ export async function runDedup(
   const loaded = await deps.loadDoc(layer, key);
   if (!loaded || loaded.allEntries().length === 0) {
     emit(deps, { stage: "done", no_doc: true, edits_applied: 0 });
-    return { layer, key, iterationsRun: 0, editsApplied: 0, convergedEarly: true, noDoc: true };
+    return {
+      layer,
+      key,
+      iterationsRun: 0,
+      editsApplied: 0,
+      refsPreserved: 0,
+      convergedEarly: true,
+      noDoc: true,
+    };
   }
 
   let doc = loaded;
   let totalApplied = 0;
+  let totalRefsPreserved = 0;
   let iterationsRun = 0;
   let convergedEarly = false;
 
@@ -90,6 +102,8 @@ export async function runDedup(
     const { doc: next, report } = applyEdits(doc, edits);
     doc = next;
     totalApplied += report.applied.length;
+    const refsPreserved = report.applied.filter((r) => r.refsPreserved).length;
+    totalRefsPreserved += refsPreserved;
     if (report.applied.length > 0) {
       await deps.saveDoc(layer, key, doc);
     }
@@ -98,16 +112,26 @@ export async function runDedup(
       turn: iterationsRun,
       applied: report.applied.length,
       rejected: report.rejected.length,
+      refs_preserved: refsPreserved,
     });
   }
 
   emit(deps, {
     stage: "done",
     edits_applied: totalApplied,
+    refs_preserved: totalRefsPreserved,
     iterations_run: iterationsRun,
     converged_early: convergedEarly,
   });
-  return { layer, key, iterationsRun, editsApplied: totalApplied, convergedEarly, noDoc: false };
+  return {
+    layer,
+    key,
+    iterationsRun,
+    editsApplied: totalApplied,
+    refsPreserved: totalRefsPreserved,
+    convergedEarly,
+    noDoc: false,
+  };
 }
 
 function emit(deps: DedupDeps, event: Record<string, unknown>): void {

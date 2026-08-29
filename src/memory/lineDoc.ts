@@ -123,6 +123,10 @@ export interface EditResult {
   op: LineEdit;
   status: "applied" | "rejected";
   detail: string;
+  /** True when a replace omitted refs and the engine kept the entry's
+   *  existing citations (provenance-preserving fallback). Only ever set
+   *  on replace; delete/insert never populate it. */
+  refsPreserved?: boolean;
 }
 
 export interface EditReport {
@@ -156,8 +160,13 @@ export function applyEdits(
 
   for (const edit of sorted) {
     try {
-      const detail = applyOne(edit, newDoc, view);
-      report.applied.push({ op: edit, status: "applied", detail });
+      const outcome = applyOne(edit, newDoc, view);
+      report.applied.push({
+        op: edit,
+        status: "applied",
+        detail: outcome.detail,
+        refsPreserved: outcome.refsPreserved,
+      });
     } catch (err) {
       report.rejected.push({
         op: edit,
@@ -173,7 +182,14 @@ export function applyEdits(
 
 // ── Apply one edit ──────────────────────────────────────────────────────
 
-function applyOne(edit: LineEdit, doc: Document, view: LineView): string {
+interface ApplyOutcome {
+  detail: string;
+  /** Set only on replace when refs were omitted and the entry's existing
+   *  citations were preserved. */
+  refsPreserved?: boolean;
+}
+
+function applyOne(edit: LineEdit, doc: Document, view: LineView): ApplyOutcome {
   if (edit.op === "replace") return applyReplace(edit, doc, view);
   if (edit.op === "delete") return applyDelete(edit, doc, view);
   return applyInsert(edit, doc, view);
@@ -183,7 +199,7 @@ function lineAt(view: LineView, n: number): Line | undefined {
   return n >= 1 && n <= view.lines.length ? view.lines[n - 1] : undefined;
 }
 
-function applyReplace(edit: ReplaceLineOp, doc: Document, view: LineView): string {
+function applyReplace(edit: ReplaceLineOp, doc: Document, view: LineView): ApplyOutcome {
   const line = lineAt(view, edit.line);
   if (!line || line.kind !== "bullet" || !line.entryId) {
     throw new Error(`line ${edit.line} is not an editable entry`);
@@ -197,15 +213,19 @@ function applyReplace(edit: ReplaceLineOp, doc: Document, view: LineView): strin
   let refs = cleanRefs(edit.refs);
   // If the LLM omitted (or only echoed entry-id markers for) refs, preserve
   // the entry's existing citations — a text-only rewrite shouldn't lose
-  // provenance.
-  if (refs.length === 0) refs = [...entry.refs];
+  // provenance. Flag it so callers can surface the silent under-merge risk.
+  let refsPreserved = false;
+  if (refs.length === 0) {
+    refs = [...entry.refs];
+    refsPreserved = true;
+  }
 
   entry.text = newText;
   entry.refs = refs;
-  return `replace ${entry.id}`;
+  return { detail: `replace ${entry.id}`, refsPreserved };
 }
 
-function applyDelete(edit: DeleteLinesOp, doc: Document, view: LineView): string {
+function applyDelete(edit: DeleteLinesOp, doc: Document, view: LineView): ApplyOutcome {
   if (edit.lineEnd < edit.lineStart) {
     throw new Error(`line_end ${edit.lineEnd} < line_start ${edit.lineStart}`);
   }
@@ -220,10 +240,10 @@ function applyDelete(edit: DeleteLinesOp, doc: Document, view: LineView): string
     const [name, entries] = doc.sections[i];
     doc.sections[i] = [name, entries.filter((e) => !idsToDrop.has(e.id))];
   }
-  return `deleted ${idsToDrop.size} entries`;
+  return { detail: `deleted ${idsToDrop.size} entries` };
 }
 
-function applyInsert(edit: InsertAfterOp, doc: Document, view: LineView): string {
+function applyInsert(edit: InsertAfterOp, doc: Document, view: LineView): ApplyOutcome {
   const text = edit.text.trim();
   if (!text) throw new Error("insert text empty");
   if (hasBanned(text)) throw new Error("insert text carries banned absolutist phrasing");
@@ -248,7 +268,7 @@ function applyInsert(edit: InsertAfterOp, doc: Document, view: LineView): string
   } else {
     target.push(entry);
   }
-  return `inserted ${entry.id} into ${JSON.stringify(section)}`;
+  return { detail: `inserted ${entry.id} into ${JSON.stringify(section)}` };
 }
 
 // ── Parse edits payload ─────────────────────────────────────────────────

@@ -53,15 +53,18 @@ describe("applyEdits", () => {
     const entry = next.find(doc.allEntries()[0].id)!;
     expect(entry.text).toBe("new text");
     expect(entry.refs).toEqual([`edit:${ULID}`]);
+    // The provenance-preserving fallback fired — callers can surface it.
+    expect(report.applied[0].refsPreserved).toBe(true);
   });
 
   it("uses provided refs when the LLM supplies a union", () => {
     const doc = docWith(["old text"]);
     const entryId = doc.allEntries()[0].id;
-    const { doc: next } = applyEdits(doc, [
+    const { doc: next, report } = applyEdits(doc, [
       { op: "replace", line: 4, newText: "merged", refs: [`edit:${ULID}`, "chat:OTHER"], reason: "merge" },
     ]);
     expect(next.find(entryId)!.refs).toEqual([`edit:${ULID}`, "chat:OTHER"]);
+    expect(report.applied[0].refsPreserved).toBeFalsy();
   });
 
   it("deletes a duplicate entry", () => {

@@ -90,4 +90,22 @@ describe("runDedup", () => {
     expect(result.convergedEarly).toBe(true);
     expect(result.editsApplied).toBe(0);
   });
+
+  it("counts a replace that omitted refs as refs-preserved", async () => {
+    const doc = dupDoc();
+    const responses = [
+      // Rewrite line 4 (first bullet) with no refs → fallback keeps its ref.
+      `{"edits": [{"op": "replace", "line": 4, "new_text": "rewritten", "refs": [], "reason": "rewrite"}]}`,
+      `{"edits": []}`,
+    ];
+    let calls = 0;
+    const deps = makeDeps({
+      loadDoc: async () => doc,
+      callLlm: async () => responses[Math.min(calls++, responses.length - 1)],
+    });
+    const result = await runDedup(deps, "L2", "edit", { iterations: 3 });
+    expect(result.editsApplied).toBe(1);
+    expect(result.refsPreserved).toBe(1);
+    expect(doc.allEntries()[0].refs).toEqual([REF]);
+  });
 });
