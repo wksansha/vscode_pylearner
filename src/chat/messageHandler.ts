@@ -7,7 +7,7 @@ import type { ChatSession, Message } from "../storage/chatStore";
 import { getConfig } from "../settings/config";
 import { MSG_TYPES, SECRET_KEYS } from "../constants";
 import { loadL3Doc } from "../memory/store";
-import { serialize } from "../memory/document";
+import { renderBody } from "../memory/document";
 import { injectProfile } from "../memory/profileInjector";
 
 const BASE_SYSTEM_PROMPT =
@@ -16,7 +16,9 @@ const BASE_SYSTEM_PROMPT =
 /** Load the L3 learner profile as markdown, or null when not yet synthesized. */
 async function loadProfileMd(storageUri: vscode.Uri): Promise<string | null> {
   const doc = await loadL3Doc(storageUri, "profile");
-  return doc ? serialize(doc) : null;
+  // Content-only view: footnotes/anchors are provenance for audit, not for
+  // the tutor, and would waste context budget if injected.
+  return doc ? renderBody(doc) : null;
 }
 
 export async function handleMessage(

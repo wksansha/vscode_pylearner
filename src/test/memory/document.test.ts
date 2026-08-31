@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parse, serialize, Document } from "../../memory/document";
+import { parse, serialize, renderBody, Document } from "../../memory/document";
 
 const U1 = "01HZK4ABCDEFGHJKMNPQRSTVWX"; // 26-char ULID-shaped
 const U2 = "01HZK5ABCDEFGHJKMNPQRSTVWX";
@@ -98,6 +98,19 @@ describe("document parse/serialize", () => {
 `;
     const doc = parse(md);
     expect(doc.sections[0][1][0].refs).toEqual([]);
+  });
+
+  it("renderBody emits content only (no markers, anchors, or footnotes)", () => {
+    const body = renderBody(parse(SAMPLE));
+    expect(body).toContain("# Python Learner Profile");
+    expect(body).toContain("## Strengths");
+    expect(body).toContain("- Uses list comprehensions frequently");
+    expect(body).toContain("- Struggles with async/await");
+    // Provenance is stripped: no footnote markers, anchors, or definitions.
+    expect(body).not.toContain("[^1]");
+    expect(body).not.toContain("<!--");
+    expect(body).not.toContain("[^1]: edit:");
+    expect(body).not.toContain("---");
   });
 
   it("Document helpers behave", () => {

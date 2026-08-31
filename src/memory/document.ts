@@ -253,3 +253,31 @@ export function serialize(doc: Document): string {
 
   return lines.join("\n").replace(/\s+$/, "") + "\n";
 }
+
+/**
+ * Render a document's content for human/LLM consumption: title, section
+ * headers, and entry text only. No footnote markers, entry-id anchors, or
+ * footnote definitions — those are provenance for audit/traceability, not
+ * content, and injecting them wastes context budget.
+ *
+ * Do NOT use this for persistence: `serialize` is the canonical on-disk form
+ * and is what carries the L3→surface→L2→L1 reference chain. This is a
+ * read-only view for injection/display.
+ */
+export function renderBody(doc: Document): string {
+  const lines: string[] = [];
+  if (doc.title) {
+    lines.push(`# ${doc.title}`);
+    lines.push("");
+  }
+  for (const [section, entries] of doc.sections) {
+    if (entries.length === 0) continue;
+    lines.push(`## ${section}`);
+    lines.push("");
+    for (const entry of entries) {
+      lines.push(`- ${rstrip(entry.text)}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n").replace(/\s+$/, "") + "\n";
+}
