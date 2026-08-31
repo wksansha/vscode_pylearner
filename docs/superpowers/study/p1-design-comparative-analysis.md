@@ -7,6 +7,7 @@
 
 ## 目录
 
+0. [设计决策记录](#设计决策记录)
 1. [三系统定位与核心范式](#一三系统定位与核心范式)
 2. [vscode-pylearner 的独特约束](#二vscode-pylearner-的独特约束)
 3. [逐维度对比分析与取舍](#三逐维度对比分析与取舍)
@@ -14,6 +15,31 @@
 5. [分阶段策略](#五分阶段策略)
 6. [不建议采用的设计](#六不建议采用的设计)
 7. [风险与缓解](#七风险与缓解)
+
+---
+
+## 设计决策记录
+
+> 更新日期：2026-08-29。本文档是 2026-08-28 的推荐设计；实际实现（P1/P2/P3）落地后对若干推荐做了取舍，本节记录最终裁决，避免文档与代码脱节。
+
+| 推荐项 | 原推荐 | 裁决 | 状态 |
+|--------|--------|------|------|
+| L3 更新语义 | REWRITE（GBrain Compiled Truth） | **采纳** | ⏳ 待实现 |
+| 两步思维链 | analyze→generate（LLM Wiki） | **暂缓** | 单步 + 校验 + audit 先跑 |
+| Facts `kind` 字段 | 加 kind（GBrain） | **暂缓** | section 已给粗粒度信号 |
+| L3 frontmatter + 锁定字段 | 加 | **随 REWRITE** | 只有做 REWRITE 才需要 |
+| 画像注入 | 去 footnote + 预算（§4.5） | **采纳** | ⏳ 待修：现实现泄漏 footnote 块 |
+| 搜索/向量/图谱 | 不做（§3.5） | 采纳 | ✅ 一致 |
+| 5 surfaces | edit/run/chat/debug/diag | 采纳 | ✅ 一致（test 预留） |
+
+**核心结论**：L2 = store（append + 原子 Op + 完整 provenance），L3 = view（REWRITE + 粗粒度 surface refs）。这是唯一值得动的大改。
+
+**L3 REWRITE 三条护栏**（采纳时必须满足）：
+1. 保留 surface 级 refs——L3→surface 粗粒度，REWRITE 不丢关键 provenance（pivot 后的 ref 设计天然兼容）
+2. 长度安全检查——新画像 < 原长 70% 则拒绝
+3. 幂等——相同输入 → 相同输出
+
+**待实现清单**：见 [2026-08-29-remaining-work.md](./2026-08-29-remaining-work.md)。
 
 ---
 
@@ -115,6 +141,8 @@
 
 **结论：管道自动 + 两步思维链摄入。不是 DeepTutor 的 agentic loop（太重），不是 GBrain 的 Agent 驱动（太慢），借鉴 LLM Wiki 的两步思路提升质量。**
 
+> 决策（2026-08-29）：**暂缓两步思维链**。实现采用 DeepTutor 的单步（每 chunk 一次 LLM → facts），质量缺口由 audit 补；等评测证明单步不够再加。
+
 ### 3.3 更新语义
 
 | 维度 | DeepTutor | GBrain | LLM Wiki | **我们取舍** |
@@ -129,6 +157,8 @@
 - **L3：REWRITE**——L3 是学习者综合画像，新信息应该触发整个画像重写，而不是追加条目
 
 这比 DeepTutor 原设计更优：DeepTutor 对 L2 和 L3 都用 Op，但 L3 用 REWRITE 更符合"画像是当前综合"的语义（GBrain 的洞见）。
+
+> 决策（2026-08-29）：**采纳**。当前实现 L3 仍是 append（`appendFactsToDoc`，与 L2 同路径），需改为 REWRITE，并满足三条护栏（见「设计决策记录」）。
 
 ### 3.4 增量机制
 
@@ -169,6 +199,8 @@ DeepTutor 原始格式:
 ```
 
 这比 GBrain 的完整围栏表格轻量，但比纯自然语言更有结构。
+
+> 决策（2026-08-29）：**暂缓**。section 已提供粗粒度分类信号（Patterns / Error Patterns / Progress 等）；kind 留到检索/评测需要时再加。
 
 ### 3.7 防御体系
 
