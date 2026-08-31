@@ -20,4 +20,21 @@ describe("injectProfile", () => {
     expect(out).not.toContain("x".repeat(20));
     expect(out.length).toBeLessThan("base".length + 10 + 300);
   });
+
+  it("strips the footnote block before injecting", () => {
+    const profile = [
+      "# User profile",
+      "",
+      "## Knowledge",
+      "- Prefers examples [^1] <!--m_xxx-->",
+      "",
+      "---",
+      "",
+      "[^1]: edit",
+    ].join("\n");
+    const out = injectProfile("base", profile);
+    expect(out).toContain("Prefers examples");
+    expect(out).not.toContain("[^1]: edit");
+  });
+
 });

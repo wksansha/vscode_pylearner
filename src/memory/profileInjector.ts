@@ -19,7 +19,11 @@ export function injectProfile(
   const profile = (profileMd ?? "").trim();
   if (!profile) return baseSystemPrompt;
 
-  const truncated = profile.slice(0, opts.profileBudget);
+  // Drop the footnote block ("---" + "[^N]: ref" lines). Citations are
+  // provenance, not content — injecting them wastes the context budget on
+  // noise the tutor never uses.
+  const body = profile.split("\n---\n")[0].trim();
+  const truncated = body.slice(0, opts.profileBudget);
   return `${baseSystemPrompt}
 
 ## Learner Profile
