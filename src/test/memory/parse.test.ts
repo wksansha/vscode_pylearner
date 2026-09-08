@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractJsonObject, parseFacts } from "../../memory/parse";
+import { extractJsonObject, parseFacts, sanitizeFactText } from "../../memory/parse";
 
 describe("extractJsonObject", () => {
   it("extracts a bare JSON object", () => {
@@ -75,5 +75,63 @@ describe("parseFacts", () => {
     expect(parseFacts(raw)).toEqual([
       { text: "padded text", section: "padded section", refs: ["e:1"] },
     ]);
+  });
+
+  it("strips citation noise the LLM sprays through prose", () => {
+    const raw = JSON.stringify({
+      facts: [
+        {
+          text: "- Across chat interactions, the user often ignores context. [^m_01M1XB3PM5SMWVPGAM3J8V8XPW] (chat) [^1]",
+          section: "Identity",
+          refs: ["chat"],
+        },
+        {
+          text: "(edit:01KZX0MMEZ0R9FCY07YYJ5HNJ6, edit:01KZX0MMF06PBZQ7Y8YQBFPKTF) edits test_md_parser.py [^7]",
+          section: "Habits",
+          refs: ["edit:01KZX0MMEZ0R9FCY07YYJ5HNJ6"],
+        },
+      ],
+    });
+    expect(parseFacts(raw)).toEqual([
+      {
+        text: "Across chat interactions, the user often ignores context.",
+        section: "Identity",
+        refs: ["chat"],
+      },
+      {
+        text: "edits test_md_parser.py",
+        section: "Habits",
+        refs: ["edit:01KZX0MMEZ0R9FCY07YYJ5HNJ6"],
+      },
+    ]);
+  });
+});
+
+describe("sanitizeFactText", () => {
+  it("leaves clean prose untouched", () => {
+    expect(sanitizeFactText("uses pytest")).toBe("uses pytest");
+    expect(sanitizeFactText("  padded text  ")).toBe("padded text");
+  });
+
+  it("strips a leading list marker", () => {
+    expect(sanitizeFactText("- types 'print' incrementally")).toBe(
+      "types 'print' incrementally"
+    );
+    expect(sanitizeFactText("- - double-dash prefix")).toBe(
+      "double-dash prefix"
+    );
+    expect(sanitizeFactText("1. numbered fact")).toBe("numbered fact");
+  });
+
+  it("strips inline footnote markers and parenthetical surface refs", () => {
+    expect(sanitizeFactText("confused about Y [^1]")).toBe("confused about Y");
+    expect(sanitizeFactText("asks questions (chat)")).toBe("asks questions");
+    expect(
+      sanitizeFactText("edits x (edit:01KZX0, edit:01KZX1) [^2]")
+    ).toBe("edits x");
+  });
+
+  it("collapses internal whitespace", () => {
+    expect(sanitizeFactText("too   many    spaces")).toBe("too many spaces");
   });
 });

@@ -17,7 +17,7 @@ export interface RetryConfig {
 
 export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   maxRetries: 3,
-  timeoutMs: 30_000,
+  timeoutMs: 90_000,   // profile synthesis prompts are large; 30s was too tight
   baseDelayMs: 1_000,
 };
 

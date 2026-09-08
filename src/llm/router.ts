@@ -18,10 +18,17 @@ export interface LlmBackend {
 }
 
 export class LlmRouter {
-  private config = getConfig().llm;
+  private _config?: ReturnType<typeof getConfig>["llm"];
+
+  private get config() {
+    if (!this._config) {
+      this._config = getConfig().llm;
+    }
+    return this._config;
+  }
 
   refreshConfig(): void {
-    this.config = getConfig().llm;
+    this._config = undefined;
   }
 
   resolve(apiKey = ""): LlmBackend {

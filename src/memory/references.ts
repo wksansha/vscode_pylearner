@@ -13,6 +13,7 @@
 
 import type { Document, Entry } from "./document";
 import { isEntryId, isValidRef } from "./ids";
+import { sanitizeFactText } from "./parse";
 import type { Entity } from "../snapshot/entity";
 
 export interface ExtractedFact {
@@ -169,7 +170,10 @@ export function renderL2EntriesForConcat(
     const lines = [`### surface: ${surface}`];
     for (const entry of entries) {
       const tag = entry.section ? `[${entry.section}] ` : "";
-      lines.push(`- ${tag}${entry.text}`);
+      // Strip citation noise from the prose before it reaches the next
+      // model — a chunk full of inline [^m_xxx] / (chat:) fragments makes
+      // the L3 curator copy those ids into its own output.
+      lines.push(`- ${tag}${sanitizeFactText(entry.text)}`);
     }
     blocks.push(lines.join("\n"));
   }

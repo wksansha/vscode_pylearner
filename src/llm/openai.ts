@@ -24,9 +24,13 @@ export class OpenAIBackend implements LlmBackend {
       );
     }
 
-    const url = this.baseUrl.endsWith("/v1")
-      ? `${this.baseUrl}/chat/completions`
-      : `${this.baseUrl}/v1/chat/completions`;
+    // Some providers (e.g. Zhipu) put the API version in the base URL
+    // (https://open.bigmodel.ai/api/v4); others expect us to append /v1
+    // (https://api.openai.com). Don't double up the version segment.
+    const base = this.baseUrl.replace(/\/+$/, "");
+    const url = /\/v\d+$/.test(base)
+      ? `${base}/chat/completions`
+      : `${base}/v1/chat/completions`;
 
     const mapped = messages.map((m) => ({
       role: m.role,

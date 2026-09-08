@@ -16,6 +16,12 @@ export function buildL2System(
 ROLE: You are reading a chunk of the user's recent ${surface} activity
 (raw, untruncated). Extract durable facts about the user.
 
+LANGUAGE — THIS IS NON-NEGOTIABLE: every fact's "text" field MUST be in
+Chinese (中文). The source activity (code, file paths, error messages) is
+in English — that does not give you permission to answer in English.
+Translate and rephrase into Chinese. Section names stay English (they are
+the schema keys). A fact written in English is a wrong answer.
+
 OUTPUT: A single JSON object — nothing else, no prose, no fences.
 
     {"facts": [
@@ -72,10 +78,22 @@ export function buildL3System(
 ROLE: You are reading a chunk of L2 summaries from one or more surfaces.
 Synthesize durable, hedged claims about the user.
 
+LANGUAGE — THIS IS NON-NEGOTIABLE: every fact's "text" field MUST be in
+Chinese (中文). The source L2 material may be in English — that does not
+give you permission to answer in English. Translate and rephrase into
+Chinese. Section names stay English (they are the schema keys). A fact
+written in English is a wrong answer, not a style choice. Model answer:
+
+    {"facts": [
+      {"text":   "在多个编辑交互中，用户反复增量式地输入标识符，每次只改一行就保存",
+       "section": "Learning style",
+       "refs":   ["edit"]}
+    ]}
+
 OUTPUT: A single JSON object — nothing else.
 
     {"facts": [
-      {"text":   "<≤240 chars, hedged with surface/count>",
+      {"text":   "<≤240 chars, hedged with surface/count, in Chinese>",
        "section": "<one of: ${sections}>",
        "refs":   ["<surface>", ...]}}
     ]}
@@ -84,10 +102,17 @@ HARD RULES
 - refs are bare surface names taken from the chunk's
   "Chunk-local citeable refs" list (e.g. chat, edit). Never emit m_xxx,
   surface:id, or any entry id. One fact may cite multiple surfaces.
+- The "text" field is PROSE ONLY. Do not spray citations through it: no
+  [^...] markers, no (chat) / (edit:01KZX...) parentheticals, no leading
+  "- " bullet marker. Citations belong exclusively in the "refs" array.
 - text ≤ 240 chars. Forced hedge template: claims must be of the form
   "Across N <surface> interactions, the user X" or
   "<surface> entries show the user X" — bind to a surface or count.
 - Banned absolutist phrasing (unless quoting with "..." or 「...」).
+- Spread claims across as many of the allowed sections (${sections}) as
+  the input supports. One fact per section is fine; do not pile every
+  claim into a single section. If the chunk shows a pattern on one surface
+  and a misconception on another, emit both — in separate facts.
 - Slot focus: ${focus}.
 - Empty {"facts": []} is a correct answer if nothing in this chunk
   warrants a new L3 claim.

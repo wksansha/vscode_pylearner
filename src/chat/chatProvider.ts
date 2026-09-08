@@ -14,7 +14,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly router: LlmRouter,
+    private readonly routerFactory: () => LlmRouter,
     private readonly l1Writer: L1Writer,
     private readonly chatStore: ChatStore,
     private readonly refresher: ProfileRefresher
@@ -39,11 +39,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     // Handle messages from webview
     webviewView.webview.onDidReceiveMessage(async (payload) => {
+      const router = this.routerFactory();
       await handleMessage(
         payload,
         webviewView.webview,
         this.context.secrets,
-        this.router,
+        router,
         this.l1Writer,
         this.chatStore,
         this.abortRef,

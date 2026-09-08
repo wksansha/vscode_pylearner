@@ -25,6 +25,8 @@
 // `serialize(parse(x))` is idempotent for any document produced by
 // `serialize`.
 
+import { sectionLabel } from "./sectionLabels";
+
 const _ENTRY_ID = "m_[0-9A-HJKMNP-TV-Z]{26}";
 
 const _TITLE_RE = /^#\s+(.+?)\s*$/;
@@ -273,6 +275,72 @@ export function renderBody(doc: Document): string {
   for (const [section, entries] of doc.sections) {
     if (entries.length === 0) continue;
     lines.push(`## ${section}`);
+    lines.push("");
+    for (const entry of entries) {
+      lines.push(`- ${rstrip(entry.text)}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n").replace(/\s+$/, "") + "\n";
+}
+
+/**
+ * Audit view: the full canonical content with Chinese section labels,
+ * entry-id anchors, and the footnote block. This is what `profile.md`
+ * on disk looks like — the complete, traceable record.
+ */
+export function renderRaw(doc: Document): string {
+  const lines: string[] = [];
+  if (doc.title) {
+    lines.push(`# ${doc.title}`);
+    lines.push("");
+  }
+  for (const [section, entries] of doc.sections) {
+    if (entries.length === 0) continue;
+    lines.push(`## ${sectionLabel(section)}`);
+    lines.push("");
+    for (const entry of entries) {
+      lines.push(`- ${rstrip(entry.text)} <!--${entry.id}-->`);
+    }
+    lines.push("");
+  }
+  // Footnote block — the provenance chain (surface:entity_id per citation).
+  const refOrder: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of doc.allEntries()) {
+    for (const ref of entry.refs) {
+      if (seen.has(ref)) continue;
+      seen.add(ref);
+      refOrder.push(ref);
+    }
+  }
+  if (refOrder.length > 0) {
+    lines.push("---");
+    lines.push("");
+    for (let i = 0; i < refOrder.length; i++) {
+      lines.push(`[^${i + 1}]: ${refOrder[i]}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n").replace(/\s+$/, "") + "\n";
+}
+
+/**
+ * Reading view for teachers and students: Chinese labels, no Identity
+ * section (that's PII — who they are, what tools they use — and no place
+ * in a lesson-facing summary), and no entry ids / footnotes (provenance
+ * is audit material, not teaching material).
+ */
+export function renderDisplay(doc: Document): string {
+  const lines: string[] = [];
+  if (doc.title) {
+    lines.push(`# ${doc.title}`);
+    lines.push("");
+  }
+  for (const [section, entries] of doc.sections) {
+    if (section === "Identity") continue; // PII — not for student/teacher view
+    if (entries.length === 0) continue;
+    lines.push(`## ${sectionLabel(section)}`);
     lines.push("");
     for (const entry of entries) {
       lines.push(`- ${rstrip(entry.text)}`);

@@ -4,6 +4,7 @@ export const CMD_IDS = {
   toggleMonitor: "pylearner.toggleMonitor",
   openSettings: "pylearner.openSettings",
   updateProfile: "pylearner.updateProfile",
+  resetProfile: "pylearner.resetProfile",
   memoryGraph: "pylearner.memoryGraph",
 } as const;
 
@@ -48,9 +49,12 @@ export const MSG_TYPES = {
   sessionLoaded: "sessionLoaded",
   // Profile panel (Webview → Host)
   getProfile: "getProfile",
+  getProfileRaw: "getProfileRaw",
   updateProfile: "updateProfile",
+  resetProfile: "resetProfile",
   // Profile panel (Host → Webview)
   profile: "profile",
+  profileRaw: "profileRaw",
   // Memory graph (Webview → Host)
   getMemoryGraph: "getMemoryGraph",
   // Memory graph (Host → Webview)

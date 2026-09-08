@@ -10,10 +10,11 @@ import { CMD_IDS, SECRET_KEYS, SURFACES } from "../constants";
 import type { LlmRouter } from "../llm/router";
 import { callLlmWithRetry } from "../llm/retry";
 import * as store from "../memory/store";
-import { l3File } from "../memory/paths";
 import { updateL2, updateL3, type ConsolidatorDeps } from "../memory/update";
+import { translateL3Doc } from "../memory/translate";
 import type { Document } from "../memory/document";
 import { readTraceEntities } from "../snapshot/reader";
+import { l3File, l3MetaFile } from "../memory/paths";
 
 function makeDeps(storageUri: vscode.Uri, router: LlmRouter, apiKey: string): ConsolidatorDeps {
   return {
@@ -45,6 +46,10 @@ async function completeViaRouter(
   system: string,
   user: string
 ): Promise<string> {
+  // Refresh the router's cached config before resolving — the Update command
+  // runs outside the chat path, so without this it would use the config
+  // snapshot taken at extension activation (stale provider/model/baseUrl).
+  router.refreshConfig();
   const backend = router.resolve(apiKey);
   const result = await callLlmWithRetry(async (signal) => {
     const chunks: string[] = [];
@@ -79,7 +84,13 @@ export async function runProfileUpdate(
   for (const surface of SURFACES) {
     await updateL2(deps, surface);
   }
-  await updateL3(deps, "profile");
+  const result = await updateL3(deps, "profile");
+  // The consolidation LLM reasons in English; the displayed profile must be
+  // in Chinese, so translate the stored doc's prose as the final step — and
+  // only when the doc actually grew, so a no-op update doesn't burn a call.
+  if (result.factsAdded > 0) {
+    await translateL3Doc(deps, "profile");
+  }
 }
 
 export function registerUpdateProfileCommand(
@@ -97,21 +108,65 @@ export function registerUpdateProfileCommand(
         try {
           await runProfileUpdate(context.globalStorageUri, context.secrets, router);
 
-          // Open the profile as a preview.
-          const profileUri = l3File(context.globalStorageUri, "profile");
-          try {
-            await vscode.window.showTextDocument(profileUri);
-          } catch {
-            // Profile doc may not exist yet if nothing was synthesized.
-            vscode.window.showInformationMessage(
-              "Python Learner: profile updated (no new facts to synthesize)."
-            );
-            return;
-          }
+          // The profile is rendered in the Profile panel (student/teacher
+          // view). The raw audit copy with entry ids/footnotes lives at
+          // l3/profile.md and is reachable via "Open profile" if needed —
+          // it does not open automatically on every update.
           vscode.window.showInformationMessage("Python Learner: profile updated.");
         } catch (err) {
           vscode.window.showErrorMessage(
             `Profile update failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    );
+  });
+}
+
+/**
+ * Drop the synthesized L3 profile (md + seen-id sidecar) so the next Update
+ * re-synthesizes it from scratch. The update pipeline is incremental — it
+ * only processes L2 entries not yet reflected in the profile — so a bad
+ * first synthesis (weak model, sloppy output) never rewrites itself without
+ * this. L1 trace and L2 memory are untouched.
+ */
+export async function resetProfile(storageUri: vscode.Uri): Promise<void> {
+  for (const uri of [l3File(storageUri, "profile"), l3MetaFile(storageUri, "profile")]) {
+    try {
+      await vscode.workspace.fs.delete(uri);
+    } catch {
+      // Missing file is fine — the goal is "no synthesized profile".
+    }
+  }
+}
+
+export function registerResetProfileCommand(
+  context: vscode.ExtensionContext,
+  router: LlmRouter
+): vscode.Disposable {
+  return vscode.commands.registerCommand(CMD_IDS.resetProfile, async () => {
+    const answer = await vscode.window.showWarningMessage(
+      "Reset the learner profile? It will be deleted and regenerated from all L2 memory.",
+      { modal: true },
+      "Reset",
+      "Cancel"
+    );
+    if (answer !== "Reset") return;
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Resetting and regenerating learner profile…",
+        cancellable: false,
+      },
+      async () => {
+        try {
+          await resetProfile(context.globalStorageUri);
+          await runProfileUpdate(context.globalStorageUri, context.secrets, router);
+          vscode.window.showInformationMessage("Python Learner: profile reset and updated.");
+        } catch (err) {
+          vscode.window.showErrorMessage(
+            `Profile reset failed: ${err instanceof Error ? err.message : String(err)}`
           );
         }
       }

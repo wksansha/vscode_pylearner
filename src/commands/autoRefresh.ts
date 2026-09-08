@@ -21,7 +21,7 @@ export class ProfileRefresher {
   constructor(
     private readonly storageUri: vscode.Uri,
     private readonly secrets: vscode.SecretStorage,
-    private readonly router: LlmRouter
+    private readonly routerFactory: () => LlmRouter
   ) {}
 
   /** Fire-and-forget entry point. Never throws; safe to call on every trigger. */
@@ -41,7 +41,8 @@ export class ProfileRefresher {
 
       this.lastRunAt = now;
       try {
-        await runProfileUpdate(this.storageUri, this.secrets, this.router);
+        const router = this.routerFactory();
+        await runProfileUpdate(this.storageUri, this.secrets, router);
       } catch (err) {
         // A background refresh must never surface errors to the user.
         console.error("[pylearner] auto profile refresh failed:", err);

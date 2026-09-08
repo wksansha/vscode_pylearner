@@ -62,6 +62,10 @@
         "title": "Python Learner: Update Learner Profile"
       },
       {
+        "command": "pylearner.resetProfile",
+        "title": "Python Learner: Reset Learner Profile"
+      },
+      {
         "command": "pylearner.memoryGraph",
         "title": "Python Learner: Memory Graph"
       }

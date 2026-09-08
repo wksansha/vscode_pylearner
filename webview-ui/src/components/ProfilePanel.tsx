@@ -4,9 +4,10 @@ import type { ProfileSnapshot } from "../types/messages";
 
 const vscode = acquireVsCodeApi();
 
-// Read-only preview of the synthesized L3 learner profile. The host owns the
-// profile.md content; this panel asks for it on mount and re-renders whatever
-// snapshot comes back.
+// Read-only preview of the synthesized L3 learner profile. Shows the
+// student/teacher-facing view only: Chinese, no Identity section, no
+// entry ids / footnotes. The raw audit view (with provenance) lives in
+// profile.md on disk and opens automatically in the editor on Update.
 export const ProfilePanel: React.FC = () => {
   const [snapshot, setSnapshot] = useState<ProfileSnapshot | null>(null);
   const [updating, setUpdating] = useState(false);
@@ -61,6 +62,14 @@ export const ProfilePanel: React.FC = () => {
             title="Update profile from learning activity"
           >
             {updating ? "…" : "Update"}
+          </button>
+          <button
+            onClick={() => vscode.postMessage({ type: "resetProfile" })}
+            disabled={updating}
+            className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50"
+            title="Reset and regenerate the profile from all L2 memory"
+          >
+            Reset
           </button>
         </div>
       </div>

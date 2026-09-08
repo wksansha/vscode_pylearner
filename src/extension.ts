@@ -8,7 +8,7 @@ import { ProfileViewProvider } from "./chat/profileViewProvider";
 import { createEditListener } from "./events/editListener";
 import { createRunListener } from "./events/runListener";
 import { createDiagnosticsListener } from "./events/diagnosticsListener";
-import { registerUpdateProfileCommand } from "./commands/updateProfile";
+import { registerUpdateProfileCommand, registerResetProfileCommand } from "./commands/updateProfile";
 import { ProfileRefresher } from "./commands/autoRefresh";
 import { registerMemoryGraphCommand } from "./commands/memoryGraph";
 
@@ -31,14 +31,16 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 function activateCore(context: vscode.ExtensionContext) {
-  // Initialize core services
+  // Initialize core services - DEFER router creation until first use
   const l1Writer = new L1Writer(context.globalStorageUri);
   const chatStore = new ChatStore(context.globalStorageUri);
-  const router = new LlmRouter();
+
+  // Factory function - creates a fresh router with current config on demand
+  const routerFactory = () => new LlmRouter();
   const refresher = new ProfileRefresher(
     context.globalStorageUri,
     context.secrets,
-    router
+    routerFactory
   );
 
   // Register event listeners
@@ -49,8 +51,8 @@ function activateCore(context: vscode.ExtensionContext) {
   context.subscriptions.push(createDiagnosticsListener(l1Writer));
   console.log("[pylearner] diagnostics listener registered");
 
-  // Register Chat Webview Provider
-  chatProvider = new ChatViewProvider(context, router, l1Writer, chatStore, refresher);
+  // Register Chat Webview Provider - pass factory, not instance
+  chatProvider = new ChatViewProvider(context, routerFactory, l1Writer, chatStore, refresher);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       VIEW_IDS.chatView,
@@ -60,7 +62,7 @@ function activateCore(context: vscode.ExtensionContext) {
   );
 
   // Register Learner Profile webview view
-  const profileProvider = new ProfileViewProvider(context, router);
+  const profileProvider = new ProfileViewProvider(context, routerFactory);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       VIEW_IDS.profileView,
@@ -85,9 +87,6 @@ function activateCore(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand(CMD_IDS.toggleMonitor, () => {
-      // Write through to real config so the event listeners (which read
-      // pylearner.monitor.* directly) actually honor the toggle, and so the
-      // change is reflected in the Settings UI.
       const cfg = vscode.workspace.getConfiguration("pylearner");
       const current = cfg.get<boolean>("monitor.editEnabled") ?? true;
       const next = !current;
@@ -109,15 +108,16 @@ function activateCore(context: vscode.ExtensionContext) {
     })
   );
 
-  context.subscriptions.push(registerUpdateProfileCommand(context, router));
+  context.subscriptions.push(registerUpdateProfileCommand(context, routerFactory));
   console.log("[pylearner] update-profile command registered");
+
+  context.subscriptions.push(registerResetProfileCommand(context, routerFactory));
+  console.log("[pylearner] reset-profile command registered");
 
   context.subscriptions.push(registerMemoryGraphCommand(context));
   console.log("[pylearner] memory-graph command registered");
 
-  // Lazy background refresh shortly after activation, so a user who has been
-  // coding without opening chat still gets a fresh profile. Fire-and-forget;
-  // threshold + cooldown are enforced inside the refresher.
+  // Lazy background refresh shortly after activation
   const refreshTimer = setTimeout(() => void refresher.maybeRefresh(), 5000);
   context.subscriptions.push({ dispose: () => clearTimeout(refreshTimer) });
 }
