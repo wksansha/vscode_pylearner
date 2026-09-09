@@ -1,6 +1,6 @@
-# Behavior Surface:打字行为分析 → 三档掌握度画像 — 设计文档
+# Behavior Surface:打字行为分析 → 掌握度画像 — 设计文档
 
-> 目标终态:画像能明确回答"这个学生**哪些掌握了、哪些还薄弱、哪些完全不会**"。
+> 目标终态:画像能明确回答"这个学生**哪些基本掌握、哪些还较为薄弱**"。
 > 手段:新增 `behavior` L1 surface,在本地提取打字行为特征(节奏/删改/错误复发),
 > 由现有 L1→L2→L3 管道把它综合成带 `knowledge_strength` 的掌握度断言。
 
@@ -24,23 +24,24 @@
 
 1. 新 `behavior` surface 的 L1 特征事件、L2 行为摘要(`Typing fluency` / `Concept struggles` / `Edit habits` 三节)。
 2. L3 profile.md 的知识级断言获得新证据源(行为证据 + 既有 chat/diag/run 证据),自动带 `knowledge_strength` 1-5。
-3. **三档掌握度总览**:display 视图与聊天注入的画像顶部新增分组渲染:
-   - ✅ 掌握(section 最弱 strength 1-2)
-   - 🟡 薄弱(strength 3)
-   - ❌ 完全不会(strength 4-5)
+3. **两档掌握度总览**:display 视图与聊天注入的画像顶部新增分组渲染:
+   - ✅ 基本掌握(section 最弱 strength 1-2)
+   - 🟡 较为薄弱(strength 3-5)
 
 ### 用户决策记录
 
 - 产品形态:**只要批量画像增强**,不做打字中的实时提醒。
 - 优先级:本功能排在 remaining-work 清单(评测→audit→REWRITE)之前。
 - **不加隐私/开关设置**(用户明确拒绝):behavior 采集随监听器常开,不新增 config key。
+- **掌握度总览两档就够**(用户 2026-09-09 简化):基本掌握 / 较为薄弱,不需要"完全不会"单独成档;
+  L3 底层 knowledge_strength 1-5 标注不变,只改总览渲染分桶。
 
 ## 二、非目标(YAGNI)
 
 - 实时干预/提醒通路(诊断与错误事件继续只写 trace)。
 - 光标轨迹、选区变化、焦点时长追踪。
 - 原始击键持久化(见 §八 开放问题)。
-- 启用 scope.md L3 槽位(三档总览从现有 profile.md 的 knowledge_strength 渲染;画像大到需要分槽时再启用,见 remaining-work 9.6)。
+- 启用 scope.md L3 槽位(两档总览从现有 profile.md 的 knowledge_strength 渲染;画像大到需要分槽时再启用,见 remaining-work 9.6)。
 - chat 代码上下文注入(独立问题,另立 spec)。
 
 ## 三、方案选择
@@ -66,7 +67,7 @@
   ▼
   现有 updateL3(零改动)→ profile.md 知识级断言 + knowledge_strength
   ▼
-  renderDisplay 头部三档总览(新)→ Profile 面板 + 聊天注入共用
+  renderDisplay 头部两档总览(新)→ Profile 面板 + 聊天注入共用
 ```
 
 复用面:chunker/document/ops/guards/dedup/merge/retry/injector 全部不动;
@@ -152,10 +153,10 @@ behavior: {
 判据规则是**给 LLM 的硬性规则**,不是代码阈值;数值特征让 LLM 有据可判。
 既有 guards(禁绝对化)、refs 强制、dedup/merge 照常生效。
 
-### 三档掌握度总览(document.ts 新增)
+### 两档掌握度总览(document.ts 新增)
 
 - `renderMasteryMap(doc)`:对每个有条目的 section 取既有 `weakestStrength`(document.ts:357)
-  → 分桶:1-2 ✅掌握 / 3 🟡薄弱 / 4-5 ❌完全不会;无 strength 数据的 section 不出现。
+  → 分桶:1-2 ✅基本掌握 / 3-5 🟡较为薄弱;无 strength 数据的 section 不出现。
 - `renderDisplay` 头部插入总览(纯渲染函数,零 LLM)。Profile 面板与聊天注入共用
   renderDisplay 输出,自动生效;注入预算不变(总览在最前,截断时也最先可见)。
 - L3 管道零改动:行为事实经 updateL3 汇入 profile.md,"Across N behavior interactions"
@@ -206,7 +207,7 @@ behavior: {
 
 - 3 个脚本化场景(模拟学生真实敲击)跑完管道 → `behavior.md` 的 facts 归因正确
   (卡壳归卡壳、手滑归手滑),L3 出现带 knowledge_strength 的行为证据断言
-- Profile 面板与聊天注入的画像顶部出现三档总览
+- Profile 面板与聊天注入的画像顶部出现两档掌握度总览
 - 跑一次 `scripts/eval-profile.ts` 确认注入效果无回归
 
 ## 十二、开放问题(不阻塞实现)
