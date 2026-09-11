@@ -161,7 +161,12 @@ export async function updateL2(
         refsDropped++;
         continue;
       }
-      kept.push({ text: fact.text, refs: keptRefs, section: fact.section });
+      kept.push({
+        text: fact.text,
+        refs: keptRefs,
+        section: fact.section,
+        knowledge_strength: fact.knowledge_strength,
+      });
     }
     const addedNow = appendFactsToDoc(doc, kept, focus.sections);
     factsAdded += addedNow.length;
@@ -291,7 +296,12 @@ export async function updateL3(
         refsDropped++;
         continue;
       }
-      kept.push({ text: fact.text, refs: keptRefs, section: fact.section });
+      kept.push({
+        text: fact.text,
+        refs: keptRefs,
+        section: fact.section,
+        knowledge_strength: fact.knowledge_strength,
+      });
     }
     const addedNow = appendFactsToDoc(doc, kept, focus.sections);
     factsAdded += addedNow.length;
@@ -325,18 +335,15 @@ export async function updateL3(
 export function appendFactsToDoc(
   doc: Document,
   facts: ExtractedFact[],
-  allowedSections: string[]
+  fallbackSections: string[]
 ): string[] {
   const newIds: string[] = [];
-  const fallbackSection = allowedSections[0] ?? "Notes";
+  const fallbackSection = fallbackSections[0] ?? "Notes";
   for (const fact of facts) {
     // L3 objectivity guard: drop facts carrying absolutist phrasing
     // (outside quoted user verbatim). Runtime safety net beneath the prompt.
     if (hasBanned(fact.text)) continue;
-    let section = fact.section ? fact.section : fallbackSection;
-    if (allowedSections.length > 0 && !allowedSections.includes(section)) {
-      section = fallbackSection;
-    }
+    const section = fact.section ? fact.section : fallbackSection;
     const op: AddOp = { op: "add", section, text: fact.text, refs: fact.refs, knowledge_strength: fact.knowledge_strength };
     const report = apply(doc, [op]);
     if (report.accepted && report.results.length > 0) {

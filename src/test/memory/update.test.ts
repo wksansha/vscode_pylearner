@@ -12,8 +12,10 @@ import { Document, parse, serialize } from "../../memory/document";
 import { newL2Meta, newL3Meta, type L2Meta, type L3Meta } from "../../memory/meta";
 import type { Entity } from "../../snapshot/entity";
 import type { Surface } from "../../constants";
+import { SLOT_FOCUS } from "../../memory/settings";
 
 const ULID = "01HZK4ABCDEFGHJKMNPQRSTVWX";
+const ULID2 = "01HZK5ABCDEFGHJKMNPQRSTVWX";
 const REF = `edit:${ULID}`;
 
 function entity(): Entity {
@@ -84,16 +86,58 @@ describe("appendFactsToDoc", () => {
     expect(doc.allEntries()[0].section).toBe("Patterns");
   });
 
-  it("maps an off-list section into the fallback", () => {
+  it("keeps an off-list section as-is (trust dynamic sections)", () => {
     const doc = new Document();
     appendFactsToDoc(doc, [{ text: "uses X", refs: [REF], section: "Weird" }], ["Patterns"]);
-    expect(doc.allEntries()[0].section).toBe("Patterns");
+    expect(doc.allEntries()[0].section).toBe("Weird");
   });
 
   it("uses the fallback when section is empty", () => {
     const doc = new Document();
     appendFactsToDoc(doc, [{ text: "uses X", refs: [REF], section: "" }], ["Patterns"]);
     expect(doc.allEntries()[0].section).toBe("Patterns");
+  });
+
+  it("propagates knowledge_strength to the entry", () => {
+    const doc = new Document();
+    appendFactsToDoc(
+      doc,
+      [{ text: "misspells True in while conditions", refs: [REF], section: "Loop Control", knowledge_strength: 4 }],
+      ["Knowledge level", "Learning style", "Identity"]
+    );
+    expect(doc.allEntries()[0].section).toBe("Loop Control");
+    expect(doc.allEntries()[0].knowledge_strength).toBe(4);
+  });
+});
+
+describe("updateL3", () => {
+  it("persists knowledge_strength and topic sections from the LLM response", async () => {
+    const l2doc = parse(
+      `# edit memory\n\n## Loop Control\n\n- works on a while loop [^1] <!--m_${ULID2}-->\n\n---\n\n[^1]: edit:${ULID2}\n`
+    );
+    const deps = makeDeps({
+      loadAllL2Docs: async () => ({ edit: l2doc }),
+      callLlm: async () =>
+        JSON.stringify({
+          facts: [
+            {
+              text: "misspells True in while conditions",
+              section: "Loop Control",
+              refs: ["edit"],
+              knowledge_strength: 4,
+            },
+          ],
+        }),
+    });
+    const result = await updateL3(deps, "profile");
+    expect(result.factsAdded).toBe(1);
+    // last saved copy wins (dedup/merge may re-save); the entry must survive
+    // with its section AND strength intact.
+    const doc = deps.savedL3[deps.savedL3.length - 1];
+    const entry = doc.allEntries()[0];
+    expect(entry.section).toBe("Loop Control");
+    expect(entry.knowledge_strength).toBe(4);
+    expect(serialize(doc)).toContain("k=4");
   });
 });
 
