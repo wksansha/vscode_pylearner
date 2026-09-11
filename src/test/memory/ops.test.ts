@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parse, Document } from "../../memory/document";
+import { parse, serialize, Document } from "../../memory/document";
 import { apply, Op } from "../../memory/ops";
 
 const U1 = "01HZK4ABCDEFGHJKMNPQRSTVWX";
@@ -98,5 +98,44 @@ describe("ops", () => {
       { op: "delete", target_id: `m_${U2}`, reason: "stale" }, // fails
     ]);
     expect(JSON.stringify(doc)).toBe(before);
+  });
+
+  it("add persists knowledge_strength on the entry", () => {
+    const doc = sampleDoc();
+    const report = apply(doc, [
+      { op: "add", section: "Loop Control", text: "misspells True", refs: [`edit:${U1}`], knowledge_strength: 4 },
+    ]);
+    expect(report.accepted).toBe(true);
+    const entry = doc.find(report.results[0].entry_id!);
+    expect(entry?.knowledge_strength).toBe(4);
+    // serialize writes the k= attr back out (round-trip proof)
+    expect(serialize(doc)).toContain("k=4");
+  });
+
+  it("clamps out-of-range knowledge_strength", () => {
+    const doc = sampleDoc();
+    const report = apply(doc, [
+      { op: "add", section: "S", text: "a", refs: [`edit:${U1}`], knowledge_strength: 0 },
+      { op: "add", section: "S", text: "b", refs: [`edit:${U1}`], knowledge_strength: 6 },
+      { op: "add", section: "S", text: "c", refs: [`edit:${U1}`], knowledge_strength: 3.7 },
+      { op: "add", section: "S", text: "d", refs: [`edit:${U1}`], knowledge_strength: NaN },
+      { op: "add", section: "S", text: "e", refs: [`edit:${U1}`], knowledge_strength: Infinity },
+    ]);
+    expect(report.accepted).toBe(true);
+    const [a, b, c, d, e] = report.results.map((r) => doc.find(r.entry_id!));
+    expect(a?.knowledge_strength).toBe(1);
+    expect(b?.knowledge_strength).toBe(5);
+    expect(c?.knowledge_strength).toBe(4);
+    expect(d?.knowledge_strength).toBeUndefined();
+    expect(e?.knowledge_strength).toBeUndefined();
+  });
+
+  it("add without knowledge_strength leaves it undefined", () => {
+    const doc = sampleDoc();
+    const report = apply(doc, [
+      { op: "add", section: "S", text: "x", refs: [`edit:${U1}`] },
+    ]);
+    const entry = doc.find(report.results[0].entry_id!);
+    expect(entry?.knowledge_strength).toBeUndefined();
   });
 });

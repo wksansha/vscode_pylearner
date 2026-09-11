@@ -140,11 +140,14 @@ export function apply(doc: Document, ops: Op[]): ApplyReport {
   for (const op of ops) {
     if (op.op === "add") {
       const newId = newEntryId();
+      const knowledge_strength =
+        op.knowledge_strength !== undefined ? clampStrength(op.knowledge_strength) : undefined;
       doc.sectionEntries(op.section).push({
         id: newId,
         section: op.section,
         text: op.text,
         refs: [...op.refs],
+        knowledge_strength,
       } satisfies Entry);
       results.push({ op, status: "applied", entry_id: newId, detail: "" });
     } else if (op.op === "edit") {
@@ -161,4 +164,13 @@ export function apply(doc: Document, ops: Op[]): ApplyReport {
   }
 
   return { accepted: true, results, reason: "" };
+}
+
+/**
+ * Clamp an LLM-supplied knowledge strength into 1..5.
+ * Non-finite values (NaN/Infinity) mean "no usable signal" → undefined.
+ */
+function clampStrength(v: number): number | undefined {
+  if (!Number.isFinite(v)) return undefined;
+  return Math.min(5, Math.max(1, Math.round(v)));
 }
