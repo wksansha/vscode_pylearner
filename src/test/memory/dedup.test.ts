@@ -7,7 +7,8 @@ const REF = "edit:01HZK4ABCDEFGHJKMNPQRSTVWX";
 
 function dupDoc(): Document {
   const doc = new Document("edit memory");
-  for (const text of ["dup", "dup"]) {
+  const texts = ["dup", "dup", "unique-a", "unique-b", "unique-c"];
+  for (const text of texts) {
     doc.sectionEntries("Patterns").push({
       id: newEntryId(),
       section: "Patterns",
@@ -57,8 +58,8 @@ describe("runDedup", () => {
   it("applies a delete then converges on the next empty response", async () => {
     const doc = dupDoc();
     const responses = [
-      // Line layout: 1 title, 2 blank, 3 section, 4 bullet, 5 bullet.
-      `{"edits": [{"op": "delete", "line_start": 5, "line_end": 5, "reason": "dup of L4"}]}`,
+      // Line layout: 1 title, 2 blank, 3 section, 4-8 five bullets.
+      `{"edits": [{"op": "delete", "line_start": 8, "line_end": 8, "reason": "dup of L4"}]}`,
       `{"edits": []}`,
     ];
     let calls = 0;
@@ -75,9 +76,9 @@ describe("runDedup", () => {
     expect(result.iterationsRun).toBe(2);
     expect(result.editsApplied).toBe(1);
     expect(savedDoc).not.toBeNull();
-    expect(savedDoc!.allEntries()).toHaveLength(1);
+    expect(savedDoc!.allEntries()).toHaveLength(4);
     // applyEdits deep-copies; the caller's doc must be left untouched.
-    expect(doc.allEntries()).toHaveLength(2);
+    expect(doc.allEntries()).toHaveLength(5);
   });
 
   it("tolerates a malformed LLM payload as zero edits", async () => {
@@ -94,7 +95,7 @@ describe("runDedup", () => {
   it("counts a replace that omitted refs as refs-preserved", async () => {
     const doc = dupDoc();
     const responses = [
-      // Rewrite line 4 (first bullet) with no refs → fallback keeps its ref.
+      // Lines 4-8 hold the five bullets; rewrite line 4 (first bullet) with no refs → fallback keeps its ref.
       `{"edits": [{"op": "replace", "line": 4, "new_text": "rewritten", "refs": [], "reason": "rewrite"}]}`,
       `{"edits": []}`,
     ];
