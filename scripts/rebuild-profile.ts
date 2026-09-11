@@ -48,6 +48,8 @@ import { translateL3Doc } from "../src/memory/translate";
 import { updateL2, updateL3, type ConsolidatorDeps } from "../src/memory/update";
 import { parseTraceLine, traceEventToEntity } from "../src/snapshot/adapter";
 import type { Entity } from "../src/snapshot/entity";
+import { MEMORY_SETTINGS } from "../src/memory/settings";
+import { callLlmWithRetry, DEFAULT_RETRY_CONFIG } from "../src/llm/retry";
 import { OpenAIBackend } from "../src/llm/openai";
 import { OllamaBackend } from "../src/llm/ollama";
 import type { LlmBackend, LlmMessage } from "../src/llm/router";
@@ -203,14 +205,32 @@ function makeDeps(backend: LlmBackend): ConsolidatorDeps {
     callLlm: async (system, user, context) => {
       const label = context ?? "unknown";
       const start = Date.now();
-      let out = "";
       const messages: LlmMessage[] = [
         { role: "system", content: system },
         { role: "user", content: user },
       ];
-      await backend.chat(messages, (chunk) => (out += chunk), AbortSignal.timeout(180_000));
+      // Same retry posture as the extension's runProfileUpdate: per-attempt
+      // timeout + bounded retries, so one slow model call can't kill the run.
+      const result = await callLlmWithRetry(
+        async (signal) => {
+          let out = "";
+          await backend.chat(messages, (chunk) => (out += chunk), signal);
+          return out;
+        },
+        { ...DEFAULT_RETRY_CONFIG, timeoutMs: 240_000, baseDelayMs: 2_000 },
+        (attempt, elapsedMs, timedOut, errorMsg) => {
+          console.log(
+            `[llm] ${label} attempt ${attempt} ${timedOut ? "TIMEOUT" : errorMsg ? "FAIL" : "done"} (${elapsedMs}ms)`
+          );
+        }
+      );
+      if (!result.ok) {
+        throw new Error(
+          `${label}: ${result.timedOut ? "timeout" : result.error} after ${result.attempts} attempt(s)`
+        );
+      }
       console.log(`[llm] ${label} ok (${Date.now() - start}ms)`);
-      return out;
+      return result.text ?? "";
     },
   };
 }
@@ -255,9 +275,12 @@ async function main(): Promise<void> {
   const deps = makeDeps(backend);
 
   // Same parallel L2 pattern as runProfileUpdate — surfaces write disjoint
-  // files, so no lock is needed.
+  // files, so no lock is needed. Doubled chunk budget halves the LLM call
+  // count for this one-off rebuild; slight per-chunk attention dilution is
+  // accepted for speed (26 → ~14 calls).
+  const l2Opts = { budget: MEMORY_SETTINGS.update.l2Budget * 2 };
   const l2Start = Date.now();
-  const l2Results = await Promise.all(SURFACES.map((surface) => updateL2(deps, surface)));
+  const l2Results = await Promise.all(SURFACES.map((surface) => updateL2(deps, surface, l2Opts)));
   console.log(`[timing] all_L2: ${Date.now() - l2Start}ms`);
   SURFACES.forEach((surface, i) => {
     const r = l2Results[i];
@@ -267,7 +290,7 @@ async function main(): Promise<void> {
   });
 
   const l3Start = Date.now();
-  const l3 = await updateL3(deps, "profile");
+  const l3 = await updateL3(deps, "profile", { budget: MEMORY_SETTINGS.update.l3Budget * 2 });
   console.log(`[timing] L3: ${Date.now() - l3Start}ms`);
   console.log(
     `L3 profile: chunks=${l3.chunksProcessed} facts=${l3.factsAdded} refsDropped=${l3.refsDropped}`
