@@ -236,8 +236,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const totalStart = Date.now();
+
+  const resetStart = Date.now();
   await resetStorage();
-  if (resetOnly) return;
+  console.log(`[timing] reset: ${Date.now() - resetStart}ms`);
+  if (resetOnly) {
+    console.log(`[timing] total: ${Date.now() - totalStart}ms`);
+    return;
+  }
 
   if (provider === "openai" && !apiKey) {
     console.error("openai 需要 --api-key 或 LLM_API_KEY");
@@ -247,19 +254,28 @@ async function main(): Promise<void> {
     provider === "ollama" ? new OllamaBackend(config) : new OpenAIBackend(config);
   const deps = makeDeps(backend);
 
-  for (const surface of SURFACES) {
-    const r = await updateL2(deps, surface);
+  // Same parallel L2 pattern as runProfileUpdate — surfaces write disjoint
+  // files, so no lock is needed.
+  const l2Start = Date.now();
+  const l2Results = await Promise.all(SURFACES.map((surface) => updateL2(deps, surface)));
+  console.log(`[timing] all_L2: ${Date.now() - l2Start}ms`);
+  SURFACES.forEach((surface, i) => {
+    const r = l2Results[i];
     console.log(
       `L2 ${surface}: chunks=${r.chunksProcessed} facts=${r.factsAdded} refsDropped=${r.refsDropped}`
     );
-  }
+  });
 
+  const l3Start = Date.now();
   const l3 = await updateL3(deps, "profile");
+  console.log(`[timing] L3: ${Date.now() - l3Start}ms`);
   console.log(
     `L3 profile: chunks=${l3.chunksProcessed} facts=${l3.factsAdded} refsDropped=${l3.refsDropped}`
   );
 
+  const translateStart = Date.now();
   const tr = await translateL3Doc(deps, "profile");
+  console.log(`[timing] translate: ${Date.now() - translateStart}ms`);
   console.log(`translate: ok=${tr.ok} translated=${tr.translated} untouched=${tr.untouched}`);
 
   const doc = await loadL3DocFs("profile");
@@ -269,6 +285,7 @@ async function main(): Promise<void> {
   }
   console.log("\n===== renderDisplay(l3/profile.md) =====\n");
   console.log(renderDisplay(doc));
+  console.log(`[timing] total: ${Date.now() - totalStart}ms`);
 }
 
 main().catch((err) => {
