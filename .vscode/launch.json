@@ -7,7 +7,8 @@
       "request": "launch",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
       "outFiles": ["${workspaceFolder}/out/**/*.js"],
-      "preLaunchTask": "pylearner: build"
+      "preLaunchTask": "pylearner: build",
+	  "experimentalNetworking": "off"
     }
   ]
 }
