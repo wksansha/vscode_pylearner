@@ -275,10 +275,10 @@ async function main(): Promise<void> {
   const deps = makeDeps(backend);
 
   // Same parallel L2 pattern as runProfileUpdate — surfaces write disjoint
-  // files, so no lock is needed. Doubled chunk budget halves the LLM call
-  // count for this one-off rebuild; slight per-chunk attention dilution is
-  // accepted for speed (26 → ~14 calls).
-  const l2Opts = { budget: MEMORY_SETTINGS.update.l2Budget * 2 };
+  // files, so no lock is needed. Budget = target CHUNK COUNT per surface
+  // (chunker: target = ceil(chars / budget)); halving it doubles the chars
+  // per LLM call, halving the call count for this one-off rebuild.
+  const l2Opts = { budget: Math.max(2, Math.round(MEMORY_SETTINGS.update.l2Budget / 2)) };
   const l2Start = Date.now();
   const l2Results = await Promise.all(SURFACES.map((surface) => updateL2(deps, surface, l2Opts)));
   console.log(`[timing] all_L2: ${Date.now() - l2Start}ms`);
@@ -290,7 +290,9 @@ async function main(): Promise<void> {
   });
 
   const l3Start = Date.now();
-  const l3 = await updateL3(deps, "profile", { budget: MEMORY_SETTINGS.update.l3Budget * 2 });
+  const l3 = await updateL3(deps, "profile", {
+    budget: Math.max(1, Math.round(MEMORY_SETTINGS.update.l3Budget / 2)),
+  });
   console.log(`[timing] L3: ${Date.now() - l3Start}ms`);
   console.log(
     `L3 profile: chunks=${l3.chunksProcessed} facts=${l3.factsAdded} refsDropped=${l3.refsDropped}`
