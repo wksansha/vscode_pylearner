@@ -16,7 +16,7 @@ import { runProfileUpdate } from "./updateProfile";
 
 export class ProfileRefresher {
   private running = false;
-  private lastRunAt = 0;
+  private lastRunAt = Date.now();
 
   constructor(
     private readonly storageUri: vscode.Uri,
