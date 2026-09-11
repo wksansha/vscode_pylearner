@@ -164,6 +164,6 @@ describe("translateL3Doc", () => {
     expect(r.ok).toBe(true);
     expect(r.translated).toBe(2);
     expect(r.untouched).toBe(1);
-    expect(pass).toBe(3); // 1 initial + 2 retries, then stop
+    expect(pass).toBe(2); // pass 2 returns nothing new → early break, no wasted call
   });
 });

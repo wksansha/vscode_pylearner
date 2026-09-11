@@ -148,6 +148,7 @@ export async function translateL3Doc(
       }
     }
     pending = toTranslate.filter((e) => !textById.has(e.id));
+    if (textById.size === knownBefore) break; // model keeps dropping — stop burning calls
   }
 
   if (translated === 0) return { ok: false, translated: 0, untouched: toTranslate.length };
