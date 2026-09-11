@@ -53,6 +53,15 @@ const SECTION_LABELS: Record<string, string> = {
   "Testing Practices": "测试实践",
   "Debugging Habits": "调试习惯",
   "Code Organization": "代码组织",
+  // Sections the LLM actually invented in the 2026-09-11 rebuild — exact-name
+  // mappings; anything else still falls back to its English name.
+  "List Comprehensions": "列表推导式",
+  "Variable Naming": "变量命名",
+  "Variable Definition": "变量定义",
+  "Syntax Errors (Indentation/Return)": "语法错误（缩进/return）",
+  "Syntax Errors (Colon Usage)": "语法错误（冒号用法）",
+  "Syntax Errors (Statement Separation)": "语法错误（语句分隔）",
+  "Type Errors (String-Float Concatenation)": "类型错误（字符串-浮点拼接）",
 };
 
 /** Translate a schema section name to its Chinese label (falls back to the

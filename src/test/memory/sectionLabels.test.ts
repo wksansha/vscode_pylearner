@@ -15,4 +15,13 @@ describe("sectionLabel", () => {
     expect(sectionLabel("Generators")).toBe("Generators");
     expect(sectionLabel("Identity")).toBe("身份信息"); // existing mapping intact
   });
+
+  it("maps sections the LLM invented in the 2026-09-11 rebuild", () => {
+    expect(sectionLabel("List Comprehensions")).toBe("列表推导式");
+    expect(sectionLabel("Variable Definition")).toBe("变量定义");
+    expect(sectionLabel("Syntax Errors (Colon Usage)")).toBe("语法错误（冒号用法）");
+    expect(sectionLabel("Type Errors (String-Float Concatenation)")).toBe(
+      "类型错误（字符串-浮点拼接）"
+    );
+  });
 });
