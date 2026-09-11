@@ -48,14 +48,14 @@ const SYNTHETIC_BODY = `# Python Learner Profile
 ## Preferences
 - Uses f-strings consistently`;
 
-// ── Probe questions: deliberately hit the profile's claims ───────────────
+// ── Probe questions: deliberately hit the profile's weak points ───────────────
 const QUESTIONS = [
-  "我最近想学点新的 Python 内容，你建议我练什么？",
-  "帮我复习一下列表推导式（list comprehension）。",
-  "解释一下装饰器（decorator），尽量详细。",
-  "我跑 Python 代码老报错，该怎么办？",
-  "我该不该现在去学 metaclass？",
-  "给我讲讲 async/await 是干嘛的。",
+  "我在函数 show_all() 里面想用 students 这个变量，但程序说 students 未定义，我该怎么办？",
+  "我写 def cal_average(scores) 的时候总是忘记加冒号，下一行就缩进报错，我该怎么记住这个规则？",
+  "我用 input 输入成绩，然后想算平均分，但是报类型错误，我该怎么改？",
+  "if choice = 1 和 if choice == 1 有什么区别？",
+  "我写 import sy as asy 为什么报错？应该怎么写？",
+  "我写 while Ture 为什么报错？怎么避免这种拼写错误？",
 ];
 
 // ── Config ───────────────────────────────────────────────────────────────

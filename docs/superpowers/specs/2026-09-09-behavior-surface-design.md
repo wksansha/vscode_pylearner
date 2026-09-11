@@ -78,8 +78,9 @@
 ### 会话
 
 - 只跟踪 `.py` 文档(与 editListener 的过滤一致),多文件并行各自成会话。
-- 每次命中该文件的 `onDidChangeTextDocument`,记录 `{t, startLine, ins, del, text?}`
-  (insert 文本截 80 字符);诊断变化记录 `{t, errors: [{msg(截 100 字符)}]}`。
+- 每次命中该文件的 `onDidChangeTextDocument`,记录 `{t, startLine, ins, del}`
+  (只记字符数,逐变更文本不存——特征不消费它,`final_text` 取自文本镜像);
+  诊断变化记录 `{t, errors: [{msg(截 100 字符)}]}`。
 - 维护每文件文本镜像(照 editListener 的 open/close 模式),提取 `final_text` 用,不要求文档仍打开。
 - **边界**:`onDidChangeActiveTextEditor` 切走 / 空闲≥5min(定时器,每次变更重置)/
   会话时长≥90min / `deactivate`。触发后提取→写 L1→清空缓冲。空闲触发的会话在 payload
@@ -100,7 +101,7 @@
   "payload": {
     "file": "main.py",
     "duration_ms": 1230000,
-    "ended_by": "editor_switch | idle | max_duration | deactivate",
+    "ended_by": "editor_switch | editor_close | idle | max_duration | deactivate",
     "truncated": false,
     "typing": {
       "changes": 420, "insert_chars": 1800, "delete_chars": 640,

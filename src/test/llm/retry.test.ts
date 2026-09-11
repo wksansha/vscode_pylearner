@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { callLlmWithRetry } from "../../llm/retry";
+import { callLlmWithRetry, type RetryConfig } from "../../llm/retry";
 
-const FAST = { maxRetries: 3, timeoutMs: 100, baseDelayMs: 1 };
+const FAST: RetryConfig = { maxRetries: 3, timeoutMs: 100, baseDelayMs: 1 };
 
 describe("callLlmWithRetry", () => {
   it("returns the text on first success", async () => {

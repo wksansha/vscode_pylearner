@@ -10,6 +10,8 @@ export interface ExtractedFact {
   text: string;
   section: string;
   refs: string[];
+  /** Knowledge strength: 1=strong mastery, 5=no evidence (optional) */
+  knowledge_strength?: number;
 }
 
 /** Strip code fences and extract the first top-level JSON object. */
@@ -72,7 +74,12 @@ export function parseFacts(raw: string): ExtractedFact[] {
           .filter((r): r is string => typeof r === "string" && r.trim().length > 0)
           .map((r) => (r as string).trim())
       : [];
-    facts.push({ text, section, refs });
+    const extracted: ExtractedFact = { text, section, refs };
+    // Optional: knowledge strength 1-5 from LLM
+    if (typeof rec.knowledge_strength === "number") {
+      extracted.knowledge_strength = rec.knowledge_strength;
+    }
+    facts.push(extracted);
   }
   return facts;
 }

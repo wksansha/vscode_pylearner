@@ -35,9 +35,12 @@ const _SECTION_RE = /^##\s+(.+?)\s*$/;
 // New bullet: "- text [^1], [^3] <!--m_xxx-->". Markers are optional (an
 // entry may cite no refs); commas + whitespace between markers are
 // tolerated so rendered superscripts read "1, 3" not "13".
+// Optional: the HTML comment may also carry a knowledge_strength attr
+// (e.g. <!--m_xxx k=3-->), preserved so the L3 weakness analysis survives
+// round-trips through the markdown file.
 // String.raw keeps the backslashes verbatim for the RegExp constructor.
 const _NEW_BULLET_RE = new RegExp(
-  String.raw`^\s*-\s+(?<text>.*?)(?<markers>(?:\s*,?\s*\[\^[^\]]+\])*)\s*<!--\s*(?<id>${_ENTRY_ID})\s*-->\s*$`
+  String.raw`^\s*-\s+(?<text>.*?)(?<markers>(?:\s*,?\s*\[\^[^\]]+\])*)\s*<!--\s*(?<id>${_ENTRY_ID})(?:\s+k=(?<strength>[1-5]))?\s*-->\s*$`
 );
 // Legacy bullet: "- text[^m_xxx]"
 const _OLD_BULLET_RE = new RegExp(
@@ -69,6 +72,8 @@ export interface Entry {
   section: string;
   text: string;
   refs: string[];
+  /** Knowledge strength: 1=strong mastery, 5=no evidence (optional, set by L3 synthesis) */
+  knowledge_strength?: number;
 }
 
 export class Document {
@@ -188,7 +193,12 @@ export function parse(md: string): Document {
           entryRefs.push(ref);
         }
       }
-      currentEntries.push({ id: entryId, section: currentSection, text, refs: entryRefs });
+      const entry: Entry = { id: entryId, section: currentSection, text, refs: entryRefs };
+      const strengthStr = named(mNewB, "strength");
+      if (strengthStr) {
+        entry.knowledge_strength = parseInt(strengthStr, 10);
+      }
+      currentEntries.push(entry);
       continue;
     }
 
@@ -239,7 +249,9 @@ export function serialize(doc: Document): string {
         .map((r) => `[^${refToLabel.get(r)}]`)
         .join(", ");
       const text = rstrip(entry.text);
-      lines.push(markers ? `- ${text} ${markers} <!--${entry.id}-->` : `- ${text} <!--${entry.id}-->`);
+      const strengthAttr = entry.knowledge_strength !== undefined ? ` k=${entry.knowledge_strength}` : "";
+      const anchor = `<!--${entry.id}${strengthAttr}-->`;
+      lines.push(markers ? `- ${text} ${markers} ${anchor}` : `- ${text} ${anchor}`);
     }
     lines.push("");
   }
@@ -326,10 +338,39 @@ export function renderRaw(doc: Document): string {
 }
 
 /**
+ * Map knowledge_strength (1-5) to a Chinese label and emoji.
+ * Used by renderDisplay to show weakness level per section.
+ */
+function strengthLabel(level?: number): string {
+  if (level === undefined) return "";
+  switch (level) {
+    case 1: return " ✅ 已掌握";
+    case 2: return " 🟢 较好";
+    case 3: return " 🟡 一般";
+    case 4: return " 🔴 存在误区";
+    case 5: return " ⚠️ 最严重";
+    default: return "";
+  }
+}
+
+/**
+ * Compute the weakest knowledge_strength across a section's entries.
+ * Lower number = stronger mastery; we use the MAX (worst) value.
+ */
+function sectionWeakness(entries: Entry[]): number | undefined {
+  const levels = entries.map(e => e.knowledge_strength).filter((v): v is number => v !== undefined);
+  if (levels.length === 0) return undefined;
+  return Math.max(...levels);
+}
+
+/**
  * Reading view for teachers and students: Chinese labels, no Identity
  * section (that's PII — who they are, what tools they use — and no place
  * in a lesson-facing summary), and no entry ids / footnotes (provenance
  * is audit material, not teaching material).
+ *
+ * Shows knowledge_strength per section header so teachers can
+ * quickly identify which topics need attention.
  */
 export function renderDisplay(doc: Document): string {
   const lines: string[] = [];
@@ -340,10 +381,15 @@ export function renderDisplay(doc: Document): string {
   for (const [section, entries] of doc.sections) {
     if (section === "Identity") continue; // PII — not for student/teacher view
     if (entries.length === 0) continue;
-    lines.push(`## ${sectionLabel(section)}`);
+
+    const weakest = sectionWeakness(entries);
+    const label = strengthLabel(weakest);
+    lines.push(`## ${sectionLabel(section)}${label}`);
     lines.push("");
     for (const entry of entries) {
-      lines.push(`- ${rstrip(entry.text)}`);
+      const entryLabel = strengthLabel(entry.knowledge_strength);
+      const text = entryLabel ? `${rstrip(entry.text)}${entryLabel}` : rstrip(entry.text);
+      lines.push(`- ${text}`);
     }
     lines.push("");
   }

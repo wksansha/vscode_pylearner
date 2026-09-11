@@ -17,7 +17,7 @@ export interface RetryConfig {
 
 export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   maxRetries: 3,
-  timeoutMs: 90_000,   // profile synthesis prompts are large; 30s was too tight
+  timeoutMs: 60_000,    // Default; most call sites (e.g. updateProfile) pass an explicit config
   baseDelayMs: 1_000,
 };
 
@@ -36,7 +36,8 @@ function sleep(ms: number): Promise<void> {
 
 export async function callLlmWithRetry(
   doCall: (signal: AbortSignal) => Promise<string>,
-  config: RetryConfig = DEFAULT_RETRY_CONFIG
+  config: RetryConfig = DEFAULT_RETRY_CONFIG,
+  onAttempt?: (attempt: number, elapsedMs: number, timedOut: boolean, errorMsg: string) => void
 ): Promise<RetryResult> {
   let lastError = "";
   let timedOut = false;
@@ -46,6 +47,7 @@ export async function callLlmWithRetry(
     attempts = attempt;
     const controller = new AbortController();
     let didTimeout = false;
+    const attemptStart = Date.now();
 
     const timer = setTimeout(() => {
       didTimeout = true;
@@ -54,10 +56,22 @@ export async function callLlmWithRetry(
 
     try {
       const text = await doCall(controller.signal);
+      const attemptElapsed = Date.now() - attemptStart;
+      if (didTimeout) {
+        // Timer fired but the backend still resolved — treat as a timeout
+        // rather than silently reporting a successful call.
+        timedOut = true;
+        onAttempt?.(attempt, attemptElapsed, true, "aborted after timeout");
+        break;
+      }
+      onAttempt?.(attempt, attemptElapsed, false, "");
       return { ok: true, text, attempts: attempt, timedOut: false, error: "" };
     } catch (err) {
+      const attemptElapsed = Date.now() - attemptStart;
       lastError = err instanceof Error ? err.message : String(err);
-      if (didTimeout) {
+      const wasTimeout = didTimeout;
+      onAttempt?.(attempt, attemptElapsed, wasTimeout, lastError);
+      if (wasTimeout) {
         timedOut = true;
         break; // a timeout is not retried
       }

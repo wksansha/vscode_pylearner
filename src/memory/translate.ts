@@ -20,6 +20,7 @@ export interface TranslateDeps {
   callLlm(system: string, user: string): Promise<string>;
   loadL3Doc(slot: L3Slot): Promise<Document | null>;
   saveL3Doc(slot: L3Slot, doc: Document): Promise<void>;
+  onEvent?: (event: Record<string, unknown>) => void;
 }
 
 /** How many entries to translate per LLM call. */
@@ -58,14 +59,21 @@ export interface TranslateResult {
 }
 
 /**
- * Translate the prose of every entry in an L3 doc into Chinese. The doc's
- * structure (title, sections, refs, entry ids) is untouched. Returns
- * `ok: false` only when the LLM produced nothing usable at all — in that
- * case the caller should leave the English doc in place.
+ * Translate the prose of entries in an L3 doc into Chinese. The doc's
+ * structure (title, sections, refs, entry ids) is untouched.
+ *
+ * If `newEntryIds` is provided, ONLY those entries are sent to the LLM —
+ * previously-translated entries are left in Chinese without re-costing a call.
+ * This is the key optimization for small incremental updates: the profile
+ * grows a few facts per run, not wholesale.
+ *
+ * Returns `ok: false` only when the LLM produced nothing usable at all — in
+ * that case the caller should leave the English doc in place.
  */
 export async function translateL3Doc(
   deps: TranslateDeps,
-  slot: L3Slot
+  slot: L3Slot,
+  newEntryIds?: string[]
 ): Promise<TranslateResult> {
   const doc = await deps.loadL3Doc(slot);
   if (!doc) return { ok: false, translated: 0, untouched: 0 };
@@ -73,15 +81,41 @@ export async function translateL3Doc(
   const all = doc.allEntries();
   if (all.length === 0) return { ok: true, translated: 0, untouched: 0 };
 
+  // Incremental: only translate entries whose text is still in English
+  // (i.e., not yet translated in a previous run). Previously translated
+  // entries keep their Chinese text untouched — no LLM budget wasted.
+  const idSet = new Set(newEntryIds);
+  const toTranslate = newEntryIds && newEntryIds.length > 0
+    ? all.filter((e) => idSet.has(e.id))
+    : all.filter((e) => e.refs.length === 0 || looksEnglish(e.text));
+
+  if (toTranslate.length === 0) {
+    return { ok: true, translated: 0, untouched: all.length };
+  }
+
   const textById = new Map<string, string>();
   let translated = 0;
 
-  for (let i = 0; i < all.length; i += BATCH_SIZE) {
-    const batch = all.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < toTranslate.length; i += BATCH_SIZE) {
+    const batch = toTranslate.slice(i, i + BATCH_SIZE);
     const payload = JSON.stringify(batch.map((e) => ({ id: e.id, text: e.text })));
     let data: unknown;
     try {
+      const callStart = Date.now();
+      const context = `translate:batch${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(toTranslate.length / BATCH_SIZE)}`;
       const raw = await deps.callLlm(TRANSLATE_SYSTEM, payload);
+      const llmElapsed = Date.now() - callStart;
+      if (deps.onEvent) {
+        deps.onEvent({
+          stage: "llm_call",
+          layer: "translate",
+          batch_index: Math.floor(i / BATCH_SIZE) + 1,
+          total_batches: Math.ceil(toTranslate.length / BATCH_SIZE),
+          entries_in_batch: batch.length,
+          elapsed_ms: llmElapsed,
+          context,
+        });
+      }
       const json = extractJsonArray(raw);
       if (json === null) continue;
       data = JSON.parse(json);
@@ -104,7 +138,7 @@ export async function translateL3Doc(
     }
   }
 
-  if (translated === 0) return { ok: false, translated: 0, untouched: all.length };
+  if (translated === 0) return { ok: false, translated: 0, untouched: toTranslate.length };
 
   const out = new Document(doc.title);
   for (const [section, entries] of doc.sections) {
@@ -117,5 +151,16 @@ export async function translateL3Doc(
     ]);
   }
   await deps.saveL3Doc(slot, out);
-  return { ok: true, translated, untouched: all.length - translated };
+  return { ok: true, translated, untouched: toTranslate.length - translated };
+}
+
+/** Heuristic: does `text` look like it still needs Chinese translation? */
+function looksEnglish(text: string): boolean {
+  // Simple check: presence of common English words or Latin script tokens.
+  // If it already contains significant Chinese characters, skip it.
+  const zhHits = (text.match(/[一-鿿]/g) ?? []).length;
+  if (zhHits > 5) return false; // already mostly Chinese
+  // Otherwise treat as needing translation
+  const enTokens = (text.match(/[a-zA-Z]{4,}/g) ?? []).length;
+  return enTokens > 0;
 }

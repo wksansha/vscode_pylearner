@@ -24,7 +24,8 @@ export class ProfileViewProvider implements vscode.WebviewViewProvider {
 
   constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly routerFactory: () => LlmRouter
+    private readonly routerFactory: () => LlmRouter,
+    private readonly outputChannel: vscode.OutputChannel
   ) {}
 
   resolveWebviewView(
@@ -93,20 +94,26 @@ export class ProfileViewProvider implements vscode.WebviewViewProvider {
         {
           location: vscode.ProgressLocation.Notification,
           title: "Updating learner profile…",
-          cancellable: false,
+          cancellable: true,
         },
-        async () =>
+        async (progress, token) =>
           runProfileUpdate(
             this.context.globalStorageUri,
             this.context.secrets,
-            router
+            router,
+            (event) => {
+              if (event.stage) {
+                progress.report({ message: `Stage: ${event.stage}` });
+              }
+            },
+            token,
+            (msg) => this.outputChannel.appendLine(msg)
           )
       );
     } catch (err) {
-      await this._view.webview.postMessage({
-        type: MSG_TYPES.error,
-        message: err instanceof Error ? err.message : String(err),
-      });
+      const msg = err instanceof Error ? err.message : String(err);
+      this.outputChannel.appendLine(`[pylearner] update failed: ${msg}`);
+      await this._view.webview.postMessage({ type: MSG_TYPES.error, message: msg });
       return;
     }
     await this.postSnapshot();
@@ -121,22 +128,28 @@ export class ProfileViewProvider implements vscode.WebviewViewProvider {
         {
           location: vscode.ProgressLocation.Notification,
           title: "Resetting and regenerating learner profile…",
-          cancellable: false,
+          cancellable: true,
         },
-        async () => {
+        async (progress, token) => {
           await resetProfile(this.context.globalStorageUri);
           await runProfileUpdate(
             this.context.globalStorageUri,
             this.context.secrets,
-            router
+            router,
+            (event) => {
+              if (event.stage) {
+                progress.report({ message: `Stage: ${event.stage}` });
+              }
+            },
+            token,
+            (msg) => this.outputChannel.appendLine(msg)
           );
         }
       );
     } catch (err) {
-      await this._view.webview.postMessage({
-        type: MSG_TYPES.error,
-        message: err instanceof Error ? err.message : String(err),
-      });
+      const msg = err instanceof Error ? err.message : String(err);
+      this.outputChannel.appendLine(`[pylearner] reset failed: ${msg}`);
+      await this._view.webview.postMessage({ type: MSG_TYPES.error, message: msg });
       return;
     }
     await this.postSnapshot();

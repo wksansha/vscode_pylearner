@@ -64,7 +64,7 @@ export interface ConsolidatorDeps {
   saveL2Doc(surface: Surface, doc: Document): Promise<void>;
   loadL3Doc(slot: L3Slot): Promise<Document | null>;
   saveL3Doc(slot: L3Slot, doc: Document): Promise<void>;
-  callLlm(systemPrompt: string, userPrompt: string): Promise<string>;
+  callLlm(systemPrompt: string, userPrompt: string, context?: string): Promise<string>;
   onEvent?(event: Record<string, unknown>): void;
 }
 
@@ -73,9 +73,12 @@ export async function updateL2(
   surface: Surface,
   opts: UpdateOptions = {}
 ): Promise<UpdateResult> {
+  const startTime = Date.now();
   const budget = opts.budget ?? MEMORY_SETTINGS.update.l2Budget;
   const userLabel = opts.userLabel ?? "anonymous";
   const today = todayIso();
+
+  emit(deps, { stage: "pipeline_start", surface, start_time: startTime });
 
   const meta = await deps.loadL2Meta(surface);
   const seen = new Set(meta.seen_entity_refs);
@@ -105,9 +108,11 @@ export async function updateL2(
     maxChunkChars: MEMORY_SETTINGS.chunking.maxChunkChars,
     boundary: MEMORY_SETTINGS.chunking.boundary,
   });
-  emit(deps, { stage: "chunked", chunks: chunks.length, budget, chars: text.length });
+  const chunkedElapsed = Date.now() - startTime;
+  emit(deps, { stage: "chunked", chunks: chunks.length, budget, chars: text.length, elapsed_ms: chunkedElapsed });
 
   const focus = SURFACE_FOCUS[surface];
+  emit(deps, { stage: "l2doc_loaded", elapsed_ms: Date.now() - startTime });
   const doc = (await deps.loadL2Doc(surface)) ?? new Document(`${surface} memory`);
 
   let factsAdded = 0;
@@ -132,7 +137,17 @@ export async function updateL2(
       chunk.start,
       chunk.end
     );
-    const raw = await deps.callLlm(system, user);
+    const llmStart = Date.now();
+    const callContext = `L2:${surface}:chunk${chunk.index + 1}/${chunks.length}`;
+    const raw = await deps.callLlm(system, user, callContext);
+    const llmElapsed = Date.now() - llmStart;
+    emit(deps, {
+      stage: "llm_call",
+      surface,
+      chunk_index: chunk.index + 1,
+      total_chunks: chunks.length,
+      elapsed_ms: llmElapsed
+    });
     const facts = parseFacts(raw);
     const kept: ExtractedFact[] = [];
     for (const fact of facts) {
@@ -157,21 +172,34 @@ export async function updateL2(
       turn: chunk.index + 1,
       kept: kept.length,
       added: addedNow.length,
+      llm_elapsed_ms: llmElapsed
     });
   }
 
+  const metaSaveStart = Date.now();
   await deps.saveL2Meta(surface, { last_update_at: nowIso(), seen_entity_refs: [...seenNow] });
+  emit(deps, { stage: "meta_saved", elapsed_ms: Date.now() - metaSaveStart });
 
   // Post-update passes: collapse newly-accumulated duplicates, then
   // re-serialize footnotes (and migrate any legacy L3 refs for L3 only).
   if (MEMORY_SETTINGS.dedup.autoAfterUpdate && factsAdded > 0) {
+    const dedupStart = Date.now();
     await runDedup(modeDeps(deps), "L2", surface, { userLabel });
+    emit(deps, { stage: "dedup_finished", elapsed_ms: Date.now() - dedupStart });
   }
   if (MEMORY_SETTINGS.merge.autoAfterUpdate) {
+    const mergeStart = Date.now();
     await runMerge(modeDeps(deps), "L2", surface);
+    emit(deps, { stage: "merge_finished", elapsed_ms: Date.now() - mergeStart });
   }
 
-  emit(deps, { stage: "done", facts_added: factsAdded, refs_dropped: refsDropped, chunks_processed: chunks.length });
+  emit(deps, {
+    stage: "done",
+    facts_added: factsAdded,
+    refs_dropped: refsDropped,
+    chunks_processed: chunks.length,
+    total_elapsed_ms: Date.now() - startTime
+  });
   return { layer: "L2", key: surface, chunksProcessed: chunks.length, factsAdded, refsDropped, newEntryIds, noNewInput: false };
 }
 
@@ -239,7 +267,17 @@ export async function updateL3(
       chunk.index + 1,
       chunks.length
     );
-    const raw = await deps.callLlm(system, user);
+    const llmStart = Date.now();
+    const callContext = `L3:${slot}:chunk${chunk.index + 1}/${chunks.length}`;
+    const raw = await deps.callLlm(system, user, callContext);
+    const llmElapsed = Date.now() - llmStart;
+    emit(deps, {
+      stage: "llm_call",
+      slot,
+      chunk_index: chunk.index + 1,
+      total_chunks: chunks.length,
+      elapsed_ms: llmElapsed
+    });
     const facts = parseFacts(raw);
     const kept: ExtractedFact[] = [];
     for (const fact of facts) {
@@ -264,6 +302,7 @@ export async function updateL3(
       turn: chunk.index + 1,
       kept: kept.length,
       added: addedNow.length,
+      llm_elapsed_ms: llmElapsed
     });
   }
 
@@ -298,7 +337,7 @@ export function appendFactsToDoc(
     if (allowedSections.length > 0 && !allowedSections.includes(section)) {
       section = fallbackSection;
     }
-    const op: AddOp = { op: "add", section, text: fact.text, refs: fact.refs };
+    const op: AddOp = { op: "add", section, text: fact.text, refs: fact.refs, knowledge_strength: fact.knowledge_strength };
     const report = apply(doc, [op]);
     if (report.accepted && report.results.length > 0) {
       const newId = report.results[0].entry_id;

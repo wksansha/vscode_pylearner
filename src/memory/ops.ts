@@ -23,6 +23,8 @@ export interface AddOp {
   section: string;
   text: string;
   refs: string[];
+  /** Knowledge strength: 1=strong mastery, 5=no evidence (optional) */
+  knowledge_strength?: number;
 }
 
 export interface EditOp {

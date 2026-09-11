@@ -42,7 +42,7 @@ export interface MemorySettings {
 }
 
 export const MEMORY_SETTINGS: MemorySettings = {
-  update: { l2Budget: 20, l3Budget: 10 },
+  update: { l2Budget: 8, l3Budget: 4 },
   chunking: {
     overlapRatio: 0.1,
     boundary: "paragraph",
@@ -50,7 +50,7 @@ export const MEMORY_SETTINGS: MemorySettings = {
     maxChunkChars: 64000,
   },
   reference: { enforceRequired: true, dropInvalidRefs: true },
-  dedup: { iterations: 3, autoAfterUpdate: true },
+  dedup: { iterations: 1, autoAfterUpdate: true },
   merge: { autoAfterUpdate: true, autoAfterDedup: true },
 };
 

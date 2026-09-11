@@ -71,6 +71,21 @@ export async function runDedup(
     };
   }
 
+  // Skip dedup for small docs (< 5 entries) — not enough material to dedup,
+  // and LLM call overhead isn't worth it for tiny documents.
+  if (loaded.allEntries().length < 5) {
+    emit(deps, { stage: "done", skipped: true, reason: "too_few_entries", entries: loaded.allEntries().length });
+    return {
+      layer,
+      key,
+      iterationsRun: 0,
+      editsApplied: 0,
+      refsPreserved: 0,
+      convergedEarly: true,
+      noDoc: false,
+    };
+  }
+
   let doc = loaded;
   let totalApplied = 0;
   let totalRefsPreserved = 0;

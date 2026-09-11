@@ -16,17 +16,16 @@ export function buildL2System(
 ROLE: You are reading a chunk of the user's recent ${surface} activity
 (raw, untruncated). Extract durable facts about the user.
 
-LANGUAGE — THIS IS NON-NEGOTIABLE: every fact's "text" field MUST be in
-Chinese (中文). The source activity (code, file paths, error messages) is
-in English — that does not give you permission to answer in English.
-Translate and rephrase into Chinese. Section names stay English (they are
-the schema keys). A fact written in English is a wrong answer.
+LANGUAGE: Every fact's "text" field MUST be in English. The source activity
+(code, file paths, error messages) is in English. Output facts in English.
+Section names stay English (they are the schema keys). A fact written in
+Chinese is a wrong answer.
 
 OUTPUT: A single JSON object — nothing else, no prose, no fences.
 
     {"facts": [
       {"text":   "<≤240 chars; one fact per item>",
-       "section": "<one of: ${sections}>",
+       "section": "<specific Python topic or skill area>",
        "refs":   ["<surface>:<entity_id>", ...]}}
     ]}
 
@@ -40,6 +39,13 @@ HARD RULES
   deeply, truly, mastered, expert, passionate, loves, hates, always,
   never, fully understands.
 - Surface focus: ${focus}.
+- **DYNAMIC SECTIONS**: Create specific, meaningful section names based on the
+  actual topics in the chunk (e.g., "Import Syntax", "Variable Scope",
+  "Loop Control", "Function Definition", "Error Handling", "Data Structures",
+  "String Manipulation", "List Operations", "Dictionary Usage", "Control Flow",
+  "Exception Handling", "Module System", "Type Hints", "Testing Practices",
+  "Debugging Habits", "Code Organization"). Group related facts under the same
+  specific topic section. Do NOT use generic sections like "Patterns" or "Habits".
 - If nothing material is in this chunk, emit {"facts": []} —
   that is a correct, expected answer.
 
@@ -76,44 +82,60 @@ export function buildL3System(
   return `You are the cross-surface memory curator for Python Learner user ${userLabel}.
 
 ROLE: You are reading a chunk of L2 summaries from one or more surfaces.
-Synthesize durable, hedged claims about the user.
+Synthesize durable, concise claims about the user's Python learning profile.
 
-LANGUAGE — THIS IS NON-NEGOTIABLE: every fact's "text" field MUST be in
-Chinese (中文). The source L2 material may be in English — that does not
-give you permission to answer in English. Translate and rephrase into
-Chinese. Section names stay English (they are the schema keys). A fact
-written in English is a wrong answer, not a style choice. Model answer:
+LANGUAGE: Every fact's "text" field MUST be in English. The source L2
+material may be in English. Output facts in English. Section names stay
+English (they are the schema keys). A fact written in Chinese is a wrong
+answer, not a style choice. Model answer:
 
     {"facts": [
-      {"text":   "在多个编辑交互中，用户反复增量式地输入标识符，每次只改一行就保存",
-       "section": "Learning style",
-       "refs":   ["edit"]}
+      {"text":   "User confuses import syntax, writing 'import module as alias' incorrectly",
+       "section": "Import Syntax",
+       "refs":   ["edit"],
+       "knowledge_strength": 5}
     ]}
 
 OUTPUT: A single JSON object — nothing else.
 
     {"facts": [
-      {"text":   "<≤240 chars, hedged with surface/count, in Chinese>",
-       "section": "<one of: ${sections}>",
-       "refs":   ["<surface>", ...]}}
+      {"text":   "<≤240 chars, direct conclusion, no preamble>",
+       "section": "<specific Python topic or skill area>",
+       "refs":   ["<surface>", ...],
+       "knowledge_strength": <1-5>}
     ]}
 
 HARD RULES
 - refs are bare surface names taken from the chunk's
   "Chunk-local citeable refs" list (e.g. chat, edit). Never emit m_xxx,
   surface:id, or any entry id. One fact may cite multiple surfaces.
-- The "text" field is PROSE ONLY. Do not spray citations through it: no
-  [^...] markers, no (chat) / (edit:01KZX...) parentheticals, no leading
-  "- " bullet marker. Citations belong exclusively in the "refs" array.
-- text ≤ 240 chars. Forced hedge template: claims must be of the form
-  "Across N <surface> interactions, the user X" or
-  "<surface> entries show the user X" — bind to a surface or count.
+- The "text" field is PROSE ONLY. No [^...] markers, no (chat) /
+  (edit:01KZX...) parentheticals, no leading "- " bullet marker.
+- **NO PREAMBLE TEMPLATE**: Do NOT start facts with "在多个xxx交互中" or
+  "Across N interactions, the user". Write each fact as a direct statement:
+  "User confuses import syntax, writing 'import module as alias' incorrectly" not
+  "在多个编辑交互中，用户混淆 import 语法…"
+- text ≤ 240 chars. Use precise, specific observations.
 - Banned absolutist phrasing (unless quoting with "..." or 「...」).
-- Spread claims across as many of the allowed sections (${sections}) as
-  the input supports. One fact per section is fine; do not pile every
-  claim into a single section. If the chunk shows a pattern on one surface
-  and a misconception on another, emit both — in separate facts.
-- Slot focus: ${focus}.
+- **DYNAMIC SECTIONS**: Create specific, meaningful section names based on the
+  actual topics in the chunk (e.g., "Import Syntax", "Variable Scope",
+  "Loop Control", "Function Definition", "Error Handling", "Data Structures",
+  "String Manipulation", "List Operations", "Dictionary Usage", "Control Flow",
+  "Exception Handling", "Module System", "Type Hints", "Testing Practices",
+  "Debugging Habits", "Code Organization"). Do NOT use generic sections like
+  "Learning style" or "Knowledge level". Group related facts under the same
+  specific topic section. One fact per section is fine; spread claims across
+  topics the evidence supports.
+- **KNOWLEDGE STRENGTH**: For every fact, add a "knowledge_strength"
+  integer 1-5. This is the student's mastery level for the topic in the
+  fact, based on evidence across surfaces:
+    1 = Strong mastery (consistent, correct, appears in 2+ surfaces)
+    2 = Good understanding (appears in 2+ surfaces, minor gaps)
+    3 = Partial understanding (appears in 1 surface, unclear)
+    4 = Misconception (appears but with errors/confusion)
+    5 = No evidence / unaware
+  Use the evidence in the chunk — do not default to 3. If you cannot
+  assess, use 5 (no evidence) rather than guessing.
 - Empty {"facts": []} is a correct answer if nothing in this chunk
   warrants a new L3 claim.
 
