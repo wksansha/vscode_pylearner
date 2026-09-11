@@ -26,6 +26,10 @@ export interface TranslateDeps {
 /** How many entries to translate per LLM call. */
 const BATCH_SIZE = 50;
 
+/** Total passes over the to-translate list: 1 initial + 2 retries for
+ *  entries the model dropped from its response. */
+const MAX_PASSES = 3;
+
 /** Strip code fences and pull out the first top-level JSON array. */
 function extractJsonArray(raw: string): string | null {
   let text = raw.trim();
@@ -95,47 +99,55 @@ export async function translateL3Doc(
 
   const textById = new Map<string, string>();
   let translated = 0;
+  let pending = toTranslate;
+  let pass = 0;
 
-  for (let i = 0; i < toTranslate.length; i += BATCH_SIZE) {
-    const batch = toTranslate.slice(i, i + BATCH_SIZE);
-    const payload = JSON.stringify(batch.map((e) => ({ id: e.id, text: e.text })));
-    let data: unknown;
-    try {
-      const callStart = Date.now();
-      const context = `translate:batch${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(toTranslate.length / BATCH_SIZE)}`;
-      const raw = await deps.callLlm(TRANSLATE_SYSTEM, payload);
-      const llmElapsed = Date.now() - callStart;
-      if (deps.onEvent) {
-        deps.onEvent({
-          stage: "llm_call",
-          layer: "translate",
-          batch_index: Math.floor(i / BATCH_SIZE) + 1,
-          total_batches: Math.ceil(toTranslate.length / BATCH_SIZE),
-          entries_in_batch: batch.length,
-          elapsed_ms: llmElapsed,
-          context,
-        });
+  while (pending.length > 0 && pass < MAX_PASSES) {
+    pass += 1;
+    const knownBefore = textById.size;
+    for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+      const batch = pending.slice(i, i + BATCH_SIZE);
+      const payload = JSON.stringify(batch.map((e) => ({ id: e.id, text: e.text })));
+      let data: unknown;
+      try {
+        const callStart = Date.now();
+        const context = `translate:pass${pass}:batch${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(pending.length / BATCH_SIZE)}`;
+        const raw = await deps.callLlm(TRANSLATE_SYSTEM, payload);
+        const llmElapsed = Date.now() - callStart;
+        if (deps.onEvent) {
+          deps.onEvent({
+            stage: "llm_call",
+            layer: "translate",
+            pass,
+            batch_index: Math.floor(i / BATCH_SIZE) + 1,
+            total_batches: Math.ceil(pending.length / BATCH_SIZE),
+            entries_in_batch: batch.length,
+            elapsed_ms: llmElapsed,
+            context,
+          });
+        }
+        const json = extractJsonArray(raw);
+        if (json === null) continue;
+        data = JSON.parse(json);
+      } catch {
+        continue; // bad batch — leave those entries for the next pass
       }
-      const json = extractJsonArray(raw);
-      if (json === null) continue;
-      data = JSON.parse(json);
-    } catch {
-      continue; // bad batch — leave those entries in English
-    }
-    if (!Array.isArray(data)) continue;
-    for (const item of data) {
-      if (
-        item &&
-        typeof item === "object" &&
-        typeof (item as Record<string, unknown>).id === "string" &&
-        typeof (item as Record<string, unknown>).text === "string"
-      ) {
-        const rec = item as { id: string; text: string };
-        if (textById.has(rec.id)) continue;
-        textById.set(rec.id, rec.text);
-        translated += 1;
+      if (!Array.isArray(data)) continue;
+      for (const item of data) {
+        if (
+          item &&
+          typeof item === "object" &&
+          typeof (item as Record<string, unknown>).id === "string" &&
+          typeof (item as Record<string, unknown>).text === "string"
+        ) {
+          const rec = item as { id: string; text: string };
+          if (textById.has(rec.id)) continue;
+          textById.set(rec.id, rec.text);
+          translated += 1;
+        }
       }
     }
+    pending = toTranslate.filter((e) => !textById.has(e.id));
   }
 
   if (translated === 0) return { ok: false, translated: 0, untouched: toTranslate.length };

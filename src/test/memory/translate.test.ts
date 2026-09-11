@@ -119,4 +119,51 @@ describe("translateL3Doc", () => {
     expect(batchCount).toBe(3);
     expect(doc.allEntries()[119].text).toBe("T:fact 119");
   });
+
+  it("retries untranslated entries in an extra pass", async () => {
+    const doc = makeDoc(); // 3 entries, all English
+    let pass = 0;
+    const deps: TranslateDeps = {
+      callLlm: async (_system, user) => {
+        pass += 1;
+        const payload = JSON.parse(user) as Array<{ id: string; text: string }>;
+        // pass 1 drops the last entry (model flake); pass 2 returns everything
+        const out = pass === 1 ? payload.slice(0, -1) : payload;
+        return JSON.stringify(out.map((e) => ({ id: e.id, text: `中文:${e.text}` })));
+      },
+      loadL3Doc: async () => doc,
+      saveL3Doc: async (_slot, saved) => {
+        doc.sections = saved.sections;
+        doc.title = saved.title;
+      },
+    };
+    const r = await translateL3Doc(deps, "profile");
+    expect(r.ok).toBe(true);
+    expect(r.translated).toBe(3);
+    expect(pass).toBe(2);
+    expect(doc.allEntries().every((e) => e.text.startsWith("中文:"))).toBe(true);
+  });
+
+  it("gives up after the bounded passes and reports untouched", async () => {
+    const doc = makeDoc();
+    let pass = 0;
+    const deps: TranslateDeps = {
+      callLlm: async (_system, user) => {
+        pass += 1;
+        const payload = JSON.parse(user) as Array<{ id: string; text: string }>;
+        // always drops the last entry
+        return JSON.stringify(payload.slice(0, -1).map((e) => ({ id: e.id, text: `中文:${e.text}` })));
+      },
+      loadL3Doc: async () => doc,
+      saveL3Doc: async (_slot, saved) => {
+        doc.sections = saved.sections;
+        doc.title = saved.title;
+      },
+    };
+    const r = await translateL3Doc(deps, "profile");
+    expect(r.ok).toBe(true);
+    expect(r.translated).toBe(2);
+    expect(r.untouched).toBe(1);
+    expect(pass).toBe(3); // 1 initial + 2 retries, then stop
+  });
 });
