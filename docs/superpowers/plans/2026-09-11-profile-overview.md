@@ -225,12 +225,13 @@ import { apply } from "../../memory/ops";
 import { synthesizeOverview, buildOverviewSystem, buildOverviewUser, type OverviewDeps } from "../../memory/overview";
 import type { L3Slot } from "../../memory/paths";
 
-const EMPTY_DOC = parse("");
+const EMPTY_DOC = new Document("User profile");
 
 function makeDoc(): Document {
   const doc = new Document("User profile");
   apply(doc, [
-    { op: "add", section: "Import Syntax", text: "用户在导入语句中打错字", refs: [U1], knowledge_strength: 4 },
+    // "edit" 是 shortname ref(ids.ts 白名单),apply 的 isValidRef 接受
+    { op: "add", section: "Import Syntax", text: "用户在导入语句中打错字", refs: ["edit"], knowledge_strength: 4 },
   ]);
   return doc;
 }
@@ -603,7 +604,7 @@ import { synthesizeOverview } from "../src/memory/overview";
 
 ```bash
 npx esbuild scripts/rebuild-profile.ts --bundle --platform=node --format=cjs --outfile=out/rebuild-profile.cjs
-node out/rebuild-profile.cjs --reset-only   # 应删除 13 个文件(12 + overview),再跑一次为 0
+node out/rebuild-profile.cjs --reset-only   # 首跑删 12 个(若已有旧总评 13),再跑为 0
 npx vitest run                              # 全量绿(179)
 npx tsc --noEmit                            # 无错误
 ```
