@@ -98,6 +98,11 @@ describe("appendFactsToDoc", () => {
     expect(doc.allEntries()[0].section).toBe("Patterns");
   });
 
+  it("profile slot fallback section is visible in display (not Identity)", () => {
+    expect(SLOT_FOCUS.profile.sections[0]).toBe("Knowledge level");
+    expect(SLOT_FOCUS.profile.sections).toContain("Identity");
+  });
+
   it("propagates knowledge_strength to the entry", () => {
     const doc = new Document();
     appendFactsToDoc(

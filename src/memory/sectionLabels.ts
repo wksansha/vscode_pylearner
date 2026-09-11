@@ -34,6 +34,25 @@ const SECTION_LABELS: Record<string, string> = {
   Mastery: "掌握",
   // L2 diag sections
   Issues: "问题",
+  // Dynamic topic sections the L2/L3 prompts steer the LLM toward
+  // (prompts.ts DYNAMIC SECTIONS example list). Unknown sections fall back
+  // to their English name via sectionLabel.
+  "Import Syntax": "导入语法",
+  "Variable Scope": "变量作用域",
+  "Loop Control": "循环控制",
+  "Function Definition": "函数定义",
+  "Error Handling": "错误处理",
+  "Data Structures": "数据结构",
+  "String Manipulation": "字符串操作",
+  "List Operations": "列表操作",
+  "Dictionary Usage": "字典用法",
+  "Control Flow": "流程控制",
+  "Exception Handling": "异常处理",
+  "Module System": "模块系统",
+  "Type Hints": "类型注解",
+  "Testing Practices": "测试实践",
+  "Debugging Habits": "调试习惯",
+  "Code Organization": "代码组织",
 };
 
 /** Translate a schema section name to its Chinese label (falls back to the

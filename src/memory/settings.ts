@@ -115,7 +115,10 @@ export const SLOT_FOCUS: Record<L3Slot, SurfaceFocus> = {
   profile: {
     focus:
       "Durable identity, learning style, and knowledge level. ONLY claims supported by multiple L2 entries across surfaces.",
-    sections: ["Identity", "Learning style", "Knowledge level"],
+    // Fallback order matters: appendFactsToDoc uses sections[0] for facts
+    // that omit a section, and renderDisplay hides "Identity" (PII) — so the
+    // visible "Knowledge level" must come first.
+    sections: ["Knowledge level", "Learning style", "Identity"],
   },
   scope: {
     focus: "Concepts and topics the user has demonstrably engaged with.",
