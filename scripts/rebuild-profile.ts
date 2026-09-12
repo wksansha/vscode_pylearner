@@ -45,6 +45,7 @@ import {
 } from "../src/memory/meta";
 import type { L3Slot } from "../src/memory/paths"; // type-only — erased, never bundled
 import { translateL3Doc } from "../src/memory/translate";
+import { synthesizeOverview } from "../src/memory/overview";
 import { updateL2, updateL3, type ConsolidatorDeps } from "../src/memory/update";
 import { parseTraceLine, traceEventToEntity } from "../src/snapshot/adapter";
 import type { Entity } from "../src/snapshot/entity";
@@ -117,6 +118,9 @@ function l3DocPath(slot: L3Slot): string {
 }
 function l3MetaPath(slot: L3Slot): string {
   return path.join(storageDir, "l3", `${slot}.meta.json`);
+}
+function overviewFileFs(slot: L3Slot): string {
+  return path.join(storageDir, "l3", `${slot}-overview.md`);
 }
 
 async function loadL2DocFs(surface: string): Promise<Document | null> {
@@ -245,6 +249,7 @@ async function resetStorage(): Promise<void> {
   }
   if (await rmIfExists(l3DocPath("profile"))) removed += 1;
   if (await rmIfExists(l3MetaPath("profile"))) removed += 1;
+  if (await rmIfExists(overviewFileFs("profile"))) removed += 1;
   console.log(`reset: removed ${removed} file(s) under ${storageDir}`);
 }
 
@@ -303,10 +308,26 @@ async function main(): Promise<void> {
   console.log(`[timing] translate: ${Date.now() - translateStart}ms`);
   console.log(`translate: ok=${tr.ok} translated=${tr.translated} untouched=${tr.untouched}`);
 
+  const overviewStart = Date.now();
+  try {
+    await synthesizeOverview(
+      { loadL3Doc: loadL3DocFs, callLlm: deps.callLlm, saveOverviewText: (text) => writeTextAtomic(overviewFileFs("profile"), text) },
+      "profile"
+    );
+  } catch (err) {
+    console.error(`overview failed: ${err instanceof Error ? err.message : err}`);
+  }
+  console.log(`[timing] overview: ${Date.now() - overviewStart}ms`);
+
   const doc = await loadL3DocFs("profile");
   if (!doc) {
     console.error("l3/profile.md missing after rebuild");
     process.exit(1);
+  }
+  const overviewText = await readText(overviewFileFs("profile"));
+  if (overviewText) {
+    console.log("\n===== profile-overview.md =====\n");
+    console.log(overviewText);
   }
   console.log("\n===== renderDisplay(l3/profile.md) =====\n");
   console.log(renderDisplay(doc));
