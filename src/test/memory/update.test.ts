@@ -280,3 +280,64 @@ describe("update round-trip through parse", () => {
     expect(reparsed.allEntries()[0].refs).toEqual([REF]);
   });
 });
+
+describe("updateL2 with behavior surface", () => {
+  it("extracts facts from a typing_session entity via SURFACE_FOCUS.behavior", async () => {
+    // 端到端冒烟:手工构造一条 behavior 实体(等价于 behaviorListener 将产出的
+    // L1 事件经 contentOf 渲染后的形态),验证 updateL2 按新 surface 走通并
+    // 把 focus/sections 送进 LLM prompt。
+    const typingEntity: Entity = {
+      id: ULID,
+      label: "typing_session main.py",
+      ts: "2026-09-12T00:00:00.000Z",
+      content: [
+        "### typing_session",
+        "file: main.py",
+        "duration_ms: 1230000",
+        "ended_by: idle",
+        "truncated: false",
+        'typing: {"changes":420,"insert_chars":1800,"delete_chars":640,"gap_median_ms":850,"gap_p90_ms":5000,"hesitations_5s":12,"max_gap_ms":230000}',
+        "paste_like_inserts: 3",
+        "hot_regions:",
+        "  - lines: 12-14",
+        "    final_text:",
+        "      for i in range(10)",
+        "          print(i)",
+        "    touches: 31",
+        "    insert_chars: 400",
+        "    delete_chars: 210",
+        "    constructs: for",
+        'diagnostics: {"errors_seen":[{"msg":"expected \':\'","first_rel_ms":120000,"fixed":true,"latency_ms":45000,"recurred":3}],"unresolved":1}',
+      ].join("\n"),
+      metadata: { kind: "typing_session" },
+      fingerprint: "fp-behavior",
+    };
+    const llmCalls: string[] = [];
+    const deps = makeDeps({
+      readEntities: async () => [typingEntity],
+      callLlm: async (sys, user) => {
+        llmCalls.push(`${sys}\n---\n${user}`);
+        return JSON.stringify({
+          facts: [
+            {
+              text: "31 touches clustered on a for-loop with 'expected colon' recurring across sessions",
+              section: "Loop Control",
+              refs: [`behavior:${ULID}`],
+            },
+          ],
+        });
+      },
+    });
+
+    const result = await updateL2(deps, "behavior");
+
+    expect(result.factsAdded).toBe(1);
+    expect(deps.savedL2).toHaveLength(1);
+    const entry = deps.savedL2[0].allEntries()[0];
+    expect(entry.section).toBe("Loop Control"); // off-list 动态节原样保留
+    expect(entry.refs).toEqual([`behavior:${ULID}`]);
+    // focus 文本与节名确实进入了 LLM prompt(system 侧)
+    expect(llmCalls[0]).toContain("Typing fluency");
+    expect(llmCalls[0]).toContain("Never claim struggle from a single short session alone");
+  });
+});

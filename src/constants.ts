@@ -69,9 +69,10 @@ export const EVENT_KINDS = {
   breakpointChange: "breakpoint_change",
   fileSave: "file_save",
   diagnosticsChange: "diagnostics_change",
+  typingSession: "typing_session",
 } as const;
 
-export const SURFACES = ["edit", "run", "chat", "debug", "diag"] as const;
+export const SURFACES = ["edit", "run", "chat", "debug", "diag", "behavior"] as const;
 export type Surface = (typeof SURFACES)[number];
 
 export const STORAGE_DIRS = {

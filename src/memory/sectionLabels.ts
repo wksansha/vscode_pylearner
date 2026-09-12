@@ -34,6 +34,10 @@ const SECTION_LABELS: Record<string, string> = {
   Mastery: "掌握",
   // L2 diag sections
   Issues: "问题",
+  // L2 behavior sections
+  "Typing fluency": "打字流畅度",
+  "Concept struggles": "概念卡壳",
+  "Edit habits": "编辑习惯",
   // Dynamic topic sections the L2/L3 prompts steer the LLM toward
   // (prompts.ts DYNAMIC SECTIONS example list). Unknown sections fall back
   // to their English name via sectionLabel.

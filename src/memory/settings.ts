@@ -109,6 +109,21 @@ export const SURFACE_FOCUS: Record<Surface, SurfaceFocus> = {
     focus: "Recurring diagnostic issues and how the user responds to them.",
     sections: ["Issues", "Habits", "Topics"],
   },
+  behavior: {
+    focus:
+      "Typing fluency vs conceptual struggle. Judge by these criteria: " +
+      "(1) Concept struggle: touches concentrate on one construct, the same " +
+      "syntax error recurs (recurred>=2) or pauses/rewrites cluster on it. " +
+      "(2) Typing fluency: deletions corrected within seconds, errors scattered " +
+      "across constructs, no unresolved errors at end — NOT a knowledge gap. " +
+      "(3) Paste reliance: paste_like_inserts dominate insert_chars; " +
+      "long IME comment inserts are NOT paste evidence. " +
+      "Never claim struggle from a single short session alone: hesitation in " +
+      "one session is weak evidence — only report struggle when the same " +
+      "construct shows it across 2+ sessions or alongside corroborating " +
+      "chat/diag/run evidence.",
+    sections: ["Typing fluency", "Concept struggles", "Edit habits"],
+  },
 };
 
 export const SLOT_FOCUS: Record<L3Slot, SurfaceFocus> = {
