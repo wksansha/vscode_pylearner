@@ -39,6 +39,7 @@ import { ProfileViewProvider } from "./chat/profileViewProvider";
 import { createEditListener } from "./events/editListener";
 import { createRunListener } from "./events/runListener";
 import { createDiagnosticsListener } from "./events/diagnosticsListener";
+import { createBehaviorListener } from "./events/behaviorListener";
 import { registerUpdateProfileCommand, registerResetProfileCommand } from "./commands/updateProfile";
 import { ProfileRefresher } from "./commands/autoRefresh";
 import { registerMemoryGraphCommand } from "./commands/memoryGraph";
@@ -147,6 +148,14 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     console.log("[pylearner] diagnostics listener registered");
   } catch (err) {
     console.error("[pylearner] failed to register diagnostics listener:", err);
+    throw err;
+  }
+
+  try {
+    context.subscriptions.push(createBehaviorListener(l1Writer));
+    console.log("[pylearner] behavior listener registered");
+  } catch (err) {
+    console.error("[pylearner] failed to register behavior listener:", err);
     throw err;
   }
 

@@ -27,6 +27,7 @@ import {
   type BehaviorChangeRecord,
   type BehaviorDiagSnapshot,
   type EndedBy,
+  BEHAVIOR_CONSTANTS,
 } from "./behaviorFeatures";
 
 const DEFAULTS = {
@@ -199,8 +200,89 @@ export class BehaviorSessionTracker {
 }
 
 export function createBehaviorListener(writer: L1Writer): vscode.Disposable {
-  // Implemented in Task 5.
-  void vscode;
-  void writer;
-  throw new Error("not implemented yet");
+  const tracker = new BehaviorSessionTracker();
+  let activeFile: string | null = null;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const flushEnded = () => {
+    for (const payload of tracker.drain(Date.now())) {
+      void writer.append("behavior", EVENT_KINDS.typingSession, payload as unknown as Record<string, unknown>);
+    }
+  };
+
+  const resetIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      tracker.checkIdle(Date.now());
+      flushEnded();
+    }, DEFAULTS.idleMs);
+  };
+
+  const relativePathOf = (uri: vscode.Uri): string => {
+    const workspaceRoot = vscode.workspace.getWorkspaceFolder(uri);
+    return workspaceRoot ? vscode.workspace.asRelativePath(uri, false) : uri.fsPath;
+  };
+
+  const isTracked = (fileName: string, scheme: string): boolean =>
+    scheme === "file" && fileName.endsWith(".py");
+
+  const changeSub = vscode.workspace.onDidChangeTextDocument((e) => {
+    if (!isTracked(e.document.fileName, e.document.uri.scheme)) return;
+    if (e.contentChanges.length === 0) return;
+    const t = Date.now();
+    const file = relativePathOf(e.document.uri);
+    for (const change of e.contentChanges) {
+      tracker.onEdit(
+        file,
+        change.range.start.line + 1,
+        change.text.length,
+        change.rangeLength,
+        e.document.getText(),
+        t
+      );
+    }
+    resetIdleTimer();
+    flushEnded();
+  });
+
+  const diagSub = vscode.languages.onDidChangeDiagnostics((e) => {
+    for (const uri of e.uris) {
+      if (!isTracked(uri.fsPath, uri.scheme)) continue;
+      const msgs = vscode.languages
+        .getDiagnostics(uri)
+        .filter((d) => d.severity === vscode.DiagnosticSeverity.Error)
+        .map((d) => d.message.slice(0, BEHAVIOR_CONSTANTS.DIAG_MSG_MAX_CHARS));
+      tracker.onDiagnostics(relativePathOf(uri), msgs, Date.now());
+      flushEnded();
+    }
+  });
+
+  const editorSub = vscode.window.onDidChangeActiveTextEditor((editor) => {
+    const doc = editor?.document;
+    const file =
+      doc && isTracked(doc.fileName, doc.uri.scheme) ? relativePathOf(doc.uri) : null;
+    if (activeFile && activeFile !== file) {
+      tracker.onEditorSwitch(activeFile, Date.now());
+      flushEnded();
+    }
+    activeFile = file;
+  });
+
+  const closeSub = vscode.workspace.onDidCloseTextDocument((doc) => {
+    if (!isTracked(doc.fileName, doc.uri.scheme)) return;
+    tracker.onFileClosed(relativePathOf(doc.uri), Date.now());
+    flushEnded();
+  });
+
+  return {
+    dispose() {
+      if (idleTimer) clearTimeout(idleTimer);
+      changeSub.dispose();
+      diagSub.dispose();
+      editorSub.dispose();
+      closeSub.dispose();
+      tracker.dispose(Date.now());
+      flushEnded();
+    },
+  };
 }
