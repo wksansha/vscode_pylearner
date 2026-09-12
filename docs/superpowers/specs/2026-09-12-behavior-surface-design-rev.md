@@ -92,6 +92,117 @@
 复用面:chunker/document/ops/guards/dedup/merge/retry/injector/overview 全部不动;
 `SURFACES` 数组加一项后,updateL2 的并发迭代、snapshot reader 的目录扫描自动覆盖新表面(实现时验证)。
 
+## 四点五、端到端链路 walkthrough:一个"for 循环薄弱"是怎么判出来的
+
+> 本节是 §四数据流的具体化:用一个虚构但典型的场景,把"学生做题时在 for 循环上
+> 写得很慢、频繁删改"从击键到画像的每一步走一遍,供后续实现与调试时对照。
+> 链路上任何一步的证据都落在 trace 里,可回溯审计。
+
+### 场景输入
+
+学生在做循环练习,`main.py` 第 12-14 行反复删改、多次发呆,最终代码仍缺冒号:
+
+```python
+for i in range(10)      # ← 漏了 ':'
+    print(i)
+```
+
+### 第 1 步:behaviorListener 记下物理证据(逐变更,不防抖)
+
+每次 `onDidChangeTextDocument` 追加一条内存记录(只有计数与行号,无文本);
+同时在内存维护该文件的文本镜像(当前完整代码),诊断变化单独记 `{t, errors}`:
+
+```text
+{t: 0ms,    line 12, ins 10, del 0}    ← 输入 "for i in "
+{t: 40s,    line 12, ins 0,  del 6}    ← 删掉 "in rang"
+{t: 42s,    line 12, ins 8,  del 0}    ← 重打
+{t: 222s,   line 13, ins 12, del 0}    ← 距上次变更 180s(发呆 3 分钟)
+{t: 240s,   line 12, ins 0,  del 1}    ← 改了一下,仍没加冒号
+...
+```
+
+诊断快照:`expected ':'` 在 t=120s 首次出现 → 45s 后修好 → t=300s 再次出现(复发)。
+
+### 第 2 步:会话结束,behaviorFeatures 纯函数算特征(零 LLM)
+
+5min 空闲(或切走编辑器)触发会话结束。三步统计:
+
+1. **空间定位**:行号按 3 行一桶,统计每桶 insert+delete 次数,取 top-3 = hot_regions。
+   本例第 12-14 行 31 次触碰(其余行各 2-3 次)→ 从文本镜像抠出这 3 行的最终代码。
+2. **构造识别**:本地正则发现该段含 `for` 关键字 → `constructs: ["for"]`。
+3. **节奏统计**:间隔中位数 / p90 / 最大、hesitations_5s(停顿>5s 次数)、
+   粘贴样插入数、诊断聚合(每错误的 first_rel_ms / fixed / latency_ms / recurred / unresolved)。
+
+产出 `typing_session` 事件(关键字段):
+
+```jsonc
+"hot_regions": [{
+  "lines": "12-14",
+  "final_text": "for i in range(10)\n    print(i)",
+  "touches": 31, "insert_chars": 400, "delete_chars": 210,
+  "constructs": ["for"]
+}],
+"typing": { "changes": 420, "gap_median_ms": 850, "hesitations_5s": 12,
+            "max_gap_ms": 230000 },
+"diagnostics": { "errors_seen": [
+    { "msg": "expected ':'", "first_rel_ms": 120000,
+      "fixed": true, "latency_ms": 45000, "recurred": 3 }],
+  "unresolved": 1 }
+```
+
+关键点:**"学生在 for 那几行反复删改"在此已变成结构化数字**;这是纯本地代码,
+不花 LLM 调用,且是后续一切归因的事实基础。
+
+### 第 2.5 步:防手滑的第一道闸——特征层可分辨
+
+- 手滑特征:删改间隔秒级(gap_median 小)、错误分散在多个构造、结尾 unresolved=0、最终代码正确;
+- 卡壳特征:max_gap 分钟级(盯着看)、touches 聚集单一构造、同一错误复发、结尾仍 unresolved。
+本例 max_gap=230s、recurred=3、unresolved=1 → 特征形态指向"卡壳"而非"手滑"。
+(数值边界是给 LLM 的判据输入,不是代码阈值——见 §七。)
+
+### 第 3 步:updateL2 归因——LLM 拿着数字做"判断题"(不是"计算题")
+
+typing_session 事件进入 `trace/behavior/`,下次 Update 时被切块喂给 LLM。
+LLM 收到的是**特征数字 + 判据规则**(§七 focus),按规则逐条核对:
+
+- 判据(1):touches 集中在同一 construct?——是,31 次集中在 `["for"]`;
+- 判据(1):同一错误复发?——是,`expected ':'` recurred=3;
+- 判据(1):停顿/重写聚集其上?——是,hesitations 12 次、max_gap 3.8 分钟;
+- 判据(2):像"手滑"吗?——不像,手滑特征(秒级纠正、分散、无 unresolved)均不满足;
+- 防过度概括:这是**单个会话** → 按硬规则**不许**直接断言 struggle。
+
+L2 产出(追加进 behavior.md 的 "Concept struggles" 或先记入观察):
+
+```json
+{"text": "Session shows 31 touches clustered on a for-loop with
+  'expected colon' error recurring 3x, unresolved at session end",
+ "section": "Loop Control", "refs": ["behavior"], "knowledge_strength": 4}
+```
+
+### 第 4 步:updateL3 互证——多证据才进画像
+
+L3 focus 硬规则:ONLY claims supported by multiple L2 entries across surfaces。
+本条要成立,还需 2+ 个 behavior 会话同样聚集在 for 上,或 chat(问过 for 怎么写)/
+diag / run 有印证 → 汇入 profile.md,否则停留在 L2 不升级。
+
+### 第 5 步:老师总评呈现(读者看到的终态)
+
+synthesizeOverview 每次整篇重写,把新旧证据揉成时间线判断:
+
+> | 循环控制 | 在 for 循环处 31 次触碰,'expected colon' 复发 3 次且未解决 | 🔴 存在误区 |
+
+改进后(学生后来写对了):旧 🔴 条目不删除、不回写,新增 🟢 条目;总评重写时
+LLM 同时看到两条,写出"此前在循环控制上存在误区,近期已明显改善"——呈现当下
+综合结论,档案保留进步轨迹。
+
+### 防误判三层防线(汇总)
+
+| 防线 | 层 | 机制 |
+| ---- | ---- | ---- |
+| 特征分辨 | 本地特征层 | gap_median vs max_gap、recurred、unresolved 的形态差异(§六 schema) |
+| L2 硬规则 | LLM 归因层 | 判据(2)手滑判定 + "单会话犹豫不许下结论"(§七 focus) |
+| L3 互证 | 升级层 | 2+ 会话或跨表面互证才进 profile(§七 focus 末句 + SLOT_FOCUS.profile.focus) |
+
 ## 五、会话定义与采集
 
 ### 会话
