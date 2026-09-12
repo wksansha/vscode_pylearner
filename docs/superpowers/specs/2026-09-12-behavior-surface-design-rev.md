@@ -272,6 +272,10 @@ hot_region 之下,保证 chunker 的段落边界切分仍按整条事件处理,�
 `try-except` / `dict` / `list comprehension` / `slicing` / `f-string` / `lambda`。
 多标签允许。更细的归类交给 LLM 凭 `final_text` 在 L2 阶段做。
 
+> 此表为凭"初学者高频卡壳点 + 本地正则可识别"拟定的**初值常量表**,非课程体系。
+> 上课教材/课程话题清单就绪后,此表应替换为课程话题体系(标签命名随之对齐),
+> 届时只需改常量表 + L2 prompt 一行,管道结构不变(2026-09-12 用户确认保留初值)。
+
 ### 错误消息规范化(recurred 匹配规则)
 
 诊断消息先做规范化再匹配复发:`msg.strip()`,去掉尾部 ` (file.py, line N)`
