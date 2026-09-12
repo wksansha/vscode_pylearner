@@ -395,3 +395,11 @@ export function renderDisplay(doc: Document): string {
   }
   return lines.join("\n").replace(/\s+$/, "") + "\n";
 }
+
+/** Profile reading view: prefer the LLM teacher overview; fall back to the
+ *  per-section display view (e.g. right after a reset, before the overview
+ *  pass has run). Blank overview text counts as missing. */
+export function pickProfileView(overviewText: string | null, doc: Document | null): string | null {
+  if (overviewText !== null && overviewText.trim() !== "") return overviewText;
+  return doc ? renderDisplay(doc) : null;
+}

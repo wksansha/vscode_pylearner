@@ -7,6 +7,7 @@
 //     l2/<surface>.meta.json               (L2 seen-id sidecar)
 //     l3/<slot>.md                         (L3, cross-surface profile)
 //     l3/<slot>.meta.json                  (L3 seen-id sidecar)
+//     l3/<slot>-overview.md                (L3 teacher overview, free-form md)
 //
 // Pure string helpers are exported separately so the logic is unit-testable
 // without the `vscode` module; the `vscode.Uri` wrappers are used at runtime.
@@ -32,6 +33,10 @@ export function l3MetaFileName(slot: L3Slot): string {
   return `${slot}.meta.json`;
 }
 
+export function l3OverviewFileName(slot: L3Slot): string {
+  return `${slot}-overview.md`;
+}
+
 // ── vscode.Uri wrappers ──────────────────────────────────────────────────
 
 export function l2File(storageUri: vscode.Uri, surface: string): vscode.Uri {
@@ -48,4 +53,8 @@ export function l3File(storageUri: vscode.Uri, slot: L3Slot): vscode.Uri {
 
 export function l3MetaFile(storageUri: vscode.Uri, slot: L3Slot): vscode.Uri {
   return vscode.Uri.joinPath(storageUri, "l3", l3MetaFileName(slot));
+}
+
+export function overviewFile(storageUri: vscode.Uri, slot: L3Slot): vscode.Uri {
+  return vscode.Uri.joinPath(storageUri, "l3", l3OverviewFileName(slot));
 }

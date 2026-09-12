@@ -8,7 +8,7 @@ import * as vscode from "vscode";
 import { parse, serialize, Document } from "./document";
 import type { L2Meta, L3Meta } from "./meta";
 import { parseL2Meta, parseL3Meta, serializeL2Meta, serializeL3Meta } from "./meta";
-import { l2File, l2MetaFile, l3File, l3MetaFile, type L3Slot } from "./paths";
+import { l2File, l2MetaFile, l3File, l3MetaFile, overviewFile, type L3Slot } from "./paths";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -89,4 +89,14 @@ export async function loadL3Meta(storageUri: vscode.Uri, slot: L3Slot): Promise<
 
 export async function saveL3Meta(storageUri: vscode.Uri, slot: L3Slot, meta: L3Meta): Promise<void> {
   await writeTextAtomic(l3MetaFile(storageUri, slot), JSON.stringify(serializeL3Meta(meta), null, 2));
+}
+
+// ── Overview (free-form teacher synthesis, not a Document) ──────────
+
+export async function loadOverview(storageUri: vscode.Uri, slot: L3Slot): Promise<string | null> {
+  return readText(overviewFile(storageUri, slot));
+}
+
+export async function saveOverview(storageUri: vscode.Uri, slot: L3Slot, text: string): Promise<void> {
+  await writeTextAtomic(overviewFile(storageUri, slot), text);
 }
