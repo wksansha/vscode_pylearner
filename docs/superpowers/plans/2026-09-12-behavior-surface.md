@@ -1102,15 +1102,19 @@ describe("BehaviorSessionTracker", () => {
     tracker.onEdit("main.py", 3, 2, 0, "abc\nde\nfg", 91 * 60_000 + 1_000);
     tracker.onEditorSwitch("main.py", 91 * 60_000 + 2_000);
 
-    expect(drain(tracker, 91 * 60_000 + 2_000)).toHaveLength(0); // 都挂起中
-    const out = drain(tracker, 91 * 60_000 + 2_000 + RESUME_WINDOW + 1);
-    expect(out).toHaveLength(2);
+    // 切走时前半段因"让位"已落定入队,后半段仍挂起
+    let out = drain(tracker, 91 * 60_000 + 2_000);
+    expect(out).toHaveLength(1);
     expect(out[0].ended_by).toBe("max_duration");
     expect(out[0].duration_ms).toBe(91 * 60_000);
     expect(out[0].typing.changes).toBe(3);
-    // 第二条:新会话从 91min 重新计时
-    expect(out[1].typing.changes).toBe(3);
-    expect(out[1].duration_ms).toBe(2_000);
+
+    // 后半段窗口过期落定,从 91min 重新计时
+    out = drain(tracker, 91 * 60_000 + 2_000 + RESUME_WINDOW + 1);
+    expect(out).toHaveLength(1);
+    expect(out[0].ended_by).toBe("editor_switch");
+    expect(out[0].typing.changes).toBe(3);
+    expect(out[0].duration_ms).toBe(2_000);
   });
 
   it("resumes a same-file session within the 3min window (single buffer, original start)", () => {
