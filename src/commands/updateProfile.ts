@@ -83,7 +83,11 @@ async function completeViaRouter(
       );
       return chunks.join("");
     },
-    { ...DEFAULT_RETRY_CONFIG, timeoutMs: 120_000, baseDelayMs: 2_000 },
+    // 300s per attempt (~25% headroom over rebuild-profile.ts's 240s):
+    // glm-4.6v observably needs up to 239s on a large consolidation chunk
+    // (diag chunk3), and a timeout is NOT retried — one slow call must not
+    // fail the run.
+    { ...DEFAULT_RETRY_CONFIG, timeoutMs: 300_000, baseDelayMs: 2_000 },
     (attempt, elapsedMs, timedOut, errorMsg) => {
       // per-attempt timing emitted to the pipeline's onEvent stream
       log?.(`[pylearner:llm] attempt ${attempt} of [${label}] ${timedOut ? "TIMEOUT" : errorMsg ? "FAIL" : "done"} (${elapsedMs}ms)`);
