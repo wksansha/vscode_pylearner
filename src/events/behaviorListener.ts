@@ -3,8 +3,16 @@
 // BehaviorSessionTracker is a pure state machine: one open session per .py
 // file, ended by editor switch / file close / idle ≥5min / duration ≥90min /
 // dispose ("deactivate"). Time is always passed in by the caller — tests use
-// synthetic timestamps, the wiring passes Date.now(). Ended sessions drain
-// as typing_session payloads; sessions with <3 changes are dropped (spec §八).
+// synthetic timestamps, the wiring passes Date.now().
+//
+// Emission is deferred (park + materialize): an ended session waits in the
+// single `closed` slot for the 3min resume window (spec §五 — a same-file
+// re-activation within the window continues that session, reusing its
+// buffer and start time). The payload is extracted only when the window
+// expires (drain), when another session needs the slot (endSession), or on
+// dispose — so a resumed stretch appears in the trace as ONE typing_session
+// event, never as two overlapping ones. Sessions with <3 changes are
+// dropped outright at endSession (spec §八) and are not resumable.
 //
 // createBehaviorListener wires vscode events onto the tracker (change /
 // diagnostics / active editor / close / idle timer) and appends drained
@@ -15,7 +23,6 @@ import type { L1Writer } from "../storage/l1Writer";
 import { EVENT_KINDS } from "../constants";
 import {
   extractTypingSession,
-  BEHAVIOR_CONSTANTS,
   type TypingSessionPayload,
   type BehaviorChangeRecord,
   type BehaviorDiagSnapshot,
@@ -38,7 +45,16 @@ interface OpenSession {
   lastMirror: string;
   lastActivityMs: number;
   truncated: boolean;
-  resumed: boolean;
+}
+
+// A session that has ended but is held for the 3min resume window. Only the
+// most recent closed session is resumable (spec §五: no other file's session
+// may have intervened).
+interface ClosedSession {
+  file: string;
+  endT: number;
+  endedBy: EndedBy;
+  session: OpenSession;
 }
 
 export class BehaviorSessionTracker {
@@ -49,10 +65,7 @@ export class BehaviorSessionTracker {
   private maxChanges: number;
 
   private open = new Map<string, OpenSession>();
-  // Most recent emitted session-end, any file. Resume (spec §五) applies
-  // only when THIS file re-activates within the window and no other file's
-  // session closed afterwards (i.e. lastClosed still points at it).
-  private lastClosed: { file: string; endT: number; session: OpenSession } | null = null;
+  private closed: ClosedSession | null = null;
   private ended: TypingSessionPayload[] = [];
 
   constructor(deps: Partial<typeof DEFAULTS> = {}) {
@@ -66,16 +79,15 @@ export class BehaviorSessionTracker {
   onEdit(file: string, line: number, ins: number, del: number, mirrorText: string, t: number): void {
     let s = this.open.get(file);
     if (!s) {
-      const last = this.lastClosed;
-      if (last && last.file === file && t - last.endT <= this.resumeWindowMs) {
-        s = last.session; // 续会话:沿用原缓冲与起止时间
-        s.resumed = true;
+      const c = this.closed;
+      if (c && c.file === file && t - c.endT <= this.resumeWindowMs) {
+        s = c.session; // 续会话:沿用原缓冲与起止时间(spec §五)
+        this.closed = null;
         s.lastMirror = mirrorText;
         s.lastActivityMs = t;
         this.open.set(file, s);
-        this.ended = this.ended.filter((p) => p.file !== file); // 旧会话不再单独 emit
       } else {
-        s = { file, startMs: t, changes: [], diagnostics: [], lastMirror: mirrorText, lastActivityMs: t, truncated: false, resumed: false };
+        s = { file, startMs: t, changes: [], diagnostics: [], lastMirror: mirrorText, lastActivityMs: t, truncated: false };
         this.open.set(file, s);
       }
     }
@@ -84,7 +96,7 @@ export class BehaviorSessionTracker {
     // includes the current edit.
     if (t - s.startMs >= this.maxSessionMs) {
       this.endSession(s, "max_duration", t);
-      s = { file, startMs: t, changes: [], diagnostics: [], lastMirror: mirrorText, lastActivityMs: t, truncated: false, resumed: false };
+      s = { file, startMs: t, changes: [], diagnostics: [], lastMirror: mirrorText, lastActivityMs: t, truncated: false };
       this.open.set(file, s);
     }
 
@@ -130,38 +142,59 @@ export class BehaviorSessionTracker {
     }
   }
 
-  /** Extension shutdown: end every open session as "deactivate". */
+  /** Extension shutdown: end every open session as "deactivate" and flush
+   *  everything (open sessions AND any session parked for its resume window)
+   *  so nothing is lost on shutdown. */
   dispose(t: number): void {
     for (const s of [...this.open.values()]) {
       this.endSession(s, "deactivate", t);
     }
+    this.materializeClosed();
   }
 
-  /** Take all payloads emitted since the last drain. */
-  drain(): TypingSessionPayload[] {
+  /**
+   * Take all payloads whose resume window has expired as of `t`, plus any
+   * emitted since the last drain. The wiring calls this with Date.now()
+   * after every event batch, so a parked payload lands in the trace at the
+   * first event/drain after its window expires.
+   */
+  drain(t: number): TypingSessionPayload[] {
+    this.materializeExpired(t);
     return this.ended.splice(0);
+  }
+
+  // An ended session waits in `closed` for the resume window; the payload
+  // is extracted (materialized) when the window expires, when another
+  // session needs the slot, or at dispose. A resumed session never
+  // materializes its pre-resume state — the merged session emits once.
+  private materializeExpired(t: number): void {
+    if (this.closed && t - this.closed.endT > this.resumeWindowMs) {
+      this.materializeClosed();
+    }
+  }
+
+  private materializeClosed(): void {
+    const c = this.closed;
+    if (!c) return;
+    this.closed = null;
+    this.ended.push(extractTypingSession({
+      file: c.file,
+      startMs: c.session.startMs,
+      endMs: c.endT,
+      endedBy: c.endedBy,
+      truncated: c.session.truncated,
+      changes: c.session.changes,
+      diagnostics: c.session.diagnostics,
+      finalText: c.session.lastMirror,
+    }));
   }
 
   private endSession(s: OpenSession, endedBy: EndedBy, t: number): void {
     this.open.delete(s.file);
-    const payload = extractTypingSession({
-      file: s.file,
-      startMs: s.startMs,
-      endMs: t,
-      endedBy,
-      truncated: s.truncated,
-      changes: s.changes,
-      diagnostics: s.diagnostics,
-      finalText: s.lastMirror,
-    });
-    // Drop sessions with exactly 2 changes when ended by editor switch/close and not resumed
-    const isTerminalEnd = endedBy === "editor_switch" || endedBy === "editor_close";
-    if (s.changes.length === 2 && !s.resumed && isTerminalEnd) {
-      // dropped: do not emit, do not set lastClosed
-    } else {
-      this.ended.push(payload);
-      this.lastClosed = { file: s.file, endT: t, session: s };
-    }
+    this.materializeClosed(); // 单槽位让位:上一个挂起会话此时落定为最终 payload
+    // 空会话(<3 次变更)不写事件也不可续(spec §八)。
+    if (s.changes.length < this.minChanges) return;
+    this.closed = { file: s.file, endT: t, endedBy, session: s };
   }
 }
 
@@ -169,6 +202,5 @@ export function createBehaviorListener(writer: L1Writer): vscode.Disposable {
   // Implemented in Task 5.
   void vscode;
   void writer;
-  void EVENT_KINDS;
   throw new Error("not implemented yet");
 }
