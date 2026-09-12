@@ -72,6 +72,68 @@ describe("contentOf", () => {
   });
 });
 
+describe("contentOf nested payloads", () => {
+  const base: TraceEvent = {
+    id: "behavior:01HZK4ABCDEFGHJKMNPQRSTVWX",
+    ts: "2026-09-12T00:00:00.000Z",
+    surface: "behavior",
+    kind: "typing_session",
+    payload: {},
+  };
+
+  it("renders arrays of objects as indented blocks", () => {
+    const out = contentOf({
+      ...base,
+      payload: {
+        file: "main.py",
+        hot_regions: [
+          {
+            lines: "12-14",
+            final_text: "for i in range(10)\n    print(i)",
+            touches: 31,
+            constructs: ["for"],
+          },
+        ],
+      },
+    });
+    expect(out).toContain("hot_regions:");
+    expect(out).toContain("  - lines: 12-14");
+    expect(out).toContain("    final_text:");
+    expect(out).toContain("      for i in range(10)");
+    expect(out).toContain("          print(i)"); // 源码 4 空格缩进 + 渲染缩进 6
+    expect(out).toContain("    touches: 31");
+    expect(out).toContain("    constructs: for");
+    expect(out).not.toContain("[object Object]");
+  });
+
+  it("skips blank lines inside multi-line strings (paragraph-boundary safety)", () => {
+    const out = contentOf({
+      ...base,
+      payload: { hot_regions: [{ final_text: "a = 1\n\nb = 2", touches: 1 }] },
+    });
+    // 空白行被跳过:事件内部不得出现 chunker 段落边界 /\n\s*\n+/
+    expect(/\n\s*\n/.test(out)).toBe(false);
+    expect(out).toContain("      a = 1");
+    expect(out).toContain("      b = 2");
+  });
+
+  it("renders arrays of strings as before (regression)", () => {
+    const out = contentOf({ ...base, payload: { samples: ["err a", "err b"] } });
+    expect(out).toContain("samples: err a, err b");
+  });
+
+  it("renders nested objects as JSON one-liners (regression)", () => {
+    const out = contentOf({ ...base, payload: { typing: { changes: 5 } } });
+    expect(out).toContain('typing: {"changes":5}');
+  });
+
+  it("renders scalars as before (regression)", () => {
+    const out = contentOf({ ...base, payload: { file: "main.py", duration_ms: 123 } });
+    expect(out).toContain("file: main.py");
+    expect(out).toContain("duration_ms: 123");
+  });
+});
+
 describe("traceEventToEntity", () => {
   it("maps id/ts/content/metadata", () => {
     const entity = traceEventToEntity(EVENT);
