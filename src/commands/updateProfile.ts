@@ -14,7 +14,8 @@ import { updateL2, updateL3, type ConsolidatorDeps } from "../memory/update";
 import { translateL3Doc } from "../memory/translate";
 import type { Document } from "../memory/document";
 import { readTraceEntities } from "../snapshot/reader";
-import { l3File, l3MetaFile } from "../memory/paths";
+import { synthesizeOverview, type OverviewDeps } from "../memory/overview";
+import { l3File, l3MetaFile, overviewFile } from "../memory/paths";
 
 function makeDeps(storageUri: vscode.Uri, router: LlmRouter, apiKey: string, onEvent?: (event: Record<string, unknown>) => void, log?: (msg: string) => void): ConsolidatorDeps {
   return {
@@ -37,6 +38,17 @@ function makeDeps(storageUri: vscode.Uri, router: LlmRouter, apiKey: string, onE
     saveL3Doc: (slot, doc) => store.saveL3Doc(storageUri, slot, doc),
     callLlm: (system, user, context?: string) => completeViaRouter(router, apiKey, system, user, context, onEvent, log),
     onEvent,
+  };
+}
+
+/** Overview pass deps: reuses the consolidator's LLM & L3 loader, adds only
+ *  the free-form overview text sink. ConsolidatorDeps stays untouched. */
+function makeOverviewDeps(deps: ConsolidatorDeps, storageUri: vscode.Uri): OverviewDeps {
+  return {
+    loadL3Doc: deps.loadL3Doc,
+    callLlm: deps.callLlm,
+    saveOverviewText: (text) => store.saveOverview(storageUri, "profile", text),
+    onEvent: deps.onEvent,
   };
 }
 
@@ -159,6 +171,23 @@ export async function runProfileUpdate(
     stageTimes.push({ stage: "translate_complete", elapsed_ms: translateElapsed });
   }
 
+  // Teacher overview: one LLM call synthesizing the updated profile. Runs when
+  // facts were added or when no overview exists yet (previous failure / first
+  // run). Best-effort — never fails the pipeline.
+  const overviewExists = (await store.loadOverview(storageUri, "profile")) !== null;
+  if (result.factsAdded > 0 || !overviewExists) {
+    checkCancelled();
+    const overviewStart = Date.now();
+    try {
+      await synthesizeOverview(makeOverviewDeps(deps, storageUri), "profile");
+      stageTimes.push({ stage: "overview_complete", elapsed_ms: Date.now() - overviewStart });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log?.(`[pylearner:overview] failed: ${msg}`);
+      onEvent?.({ stage: "overview_failed", error: msg });
+    }
+  }
+
   // Final timing summary — write to Output Channel for diagnostics
   const totalElapsed = Date.now() - pipelineStart;
   log?.(`\n[pylearner:timing] === Pipeline Timing Summary ===`);
@@ -225,7 +254,11 @@ export function registerUpdateProfileCommand(
  * this. L1 trace and L2 memory are untouched.
  */
 export async function resetProfile(storageUri: vscode.Uri): Promise<void> {
-  for (const uri of [l3File(storageUri, "profile"), l3MetaFile(storageUri, "profile")]) {
+  for (const uri of [
+    l3File(storageUri, "profile"),
+    l3MetaFile(storageUri, "profile"),
+    overviewFile(storageUri, "profile"),
+  ]) {
     try {
       await vscode.workspace.fs.delete(uri);
     } catch {

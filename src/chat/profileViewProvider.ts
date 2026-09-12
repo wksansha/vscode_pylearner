@@ -8,8 +8,8 @@
 import * as vscode from "vscode";
 import { MSG_TYPES } from "../constants";
 import type { LlmRouter } from "../llm/router";
-import { renderDisplay, renderRaw } from "../memory/document";
-import { loadL3Doc, loadL3Meta } from "../memory/store";
+import { pickProfileView, renderDisplay, renderRaw } from "../memory/document";
+import { loadL3Doc, loadL3Meta, loadOverview } from "../memory/store";
 import { runProfileUpdate, resetProfile } from "../commands/updateProfile";
 
 export interface ProfileSnapshot {
@@ -191,9 +191,12 @@ async function loadProfileSnapshot(
   const doc = await loadL3Doc(storageUri, "profile");
   if (!doc) return { exists: false, markdown: "", raw: "", updatedAt: null };
   const meta = await loadL3Meta(storageUri, "profile");
+  // Teacher/student view: the LLM overview when present, else the display
+  // view. The raw audit view (ids + footnotes) is unchanged.
+  const overview = await loadOverview(storageUri, "profile");
   return {
     exists: true,
-    markdown: renderDisplay(doc),   // teacher/student reading view
+    markdown: pickProfileView(overview, doc) ?? "",
     raw: renderRaw(doc),             // audit view: Chinese labels + ids + footnotes
     updatedAt: meta.last_update_at,
   };

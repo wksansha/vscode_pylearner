@@ -6,19 +6,19 @@ import type { ChatStore } from "../storage/chatStore";
 import type { ChatSession, Message } from "../storage/chatStore";
 import { getConfig } from "../settings/config";
 import { MSG_TYPES, SECRET_KEYS } from "../constants";
-import { loadL3Doc } from "../memory/store";
-import { renderDisplay } from "../memory/document";
+import { loadL3Doc, loadOverview } from "../memory/store";
+import { renderDisplay, pickProfileView } from "../memory/document";
 import { injectProfile } from "../memory/profileInjector";
 
 const BASE_SYSTEM_PROMPT =
   "You are a helpful Python learning assistant. Provide clear, concise explanations with code examples when relevant.";
 
-/** Load the L3 learner profile as markdown, or null when not yet synthesized. */
+/** Load the tutor-facing profile: the teacher overview when one exists, else
+ *  the per-section display view (fallback window right after a reset). */
 async function loadProfileMd(storageUri: vscode.Uri): Promise<string | null> {
+  const overview = await loadOverview(storageUri, "profile");
   const doc = await loadL3Doc(storageUri, "profile");
-  // Display view: Chinese, no Identity section, no entry ids/footnotes —
-  // the tutor reads the same thing a teacher or student would see.
-  return doc ? renderDisplay(doc) : null;
+  return pickProfileView(overview, doc);
 }
 
 export async function handleMessage(
