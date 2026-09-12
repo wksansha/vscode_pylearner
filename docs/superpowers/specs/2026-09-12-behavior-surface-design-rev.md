@@ -213,7 +213,11 @@ LLM 同时看到两条,写出"此前在循环控制上存在误区,近期已明�
   诊断变化记录 `{t, errors: [{msg(截 100 字符)}]}`。
 - 维护每文件文本镜像(照 editListener 的 open/close 模式),提取 `final_text` 用,不要求文档仍打开。
 - **边界**:`onDidChangeActiveTextEditor` 切走 / `onDidCloseTextDocument` 关闭 /
-  空闲≥5min(定时器,每次变更重置)/ 会话时长≥90min / `deactivate`。触发后提取→写 L1→清空缓冲。空闲触发的会话在 payload 里记 `ended_by: "idle"`,末次变更到提取的间隔即"最大停顿",不丢信号。
+  空闲≥5min(定时器,每次变更重置)/ 会话时长≥90min / `deactivate`。触发后
+  会话先挂起进入 3min 续会话窗口(见下),窗口过期/被其它会话让位/`deactivate`
+  时才提取→写 L1→清空缓冲(挂起期间同文件再编辑 = 续会话,trace 里只落一条
+  延续会话事件,不产生重叠事件);空闲触发的会话在 payload 里记 `ended_by: "idle"`,
+  末次变更到提取的间隔即"最大停顿",不丢信号。
 - 窗口强杀丢内存缓冲:可接受,不做持久化缓冲。
 
 ### 边界设计细节

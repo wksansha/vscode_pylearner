@@ -471,8 +471,12 @@ describe("extractTypingSession: for-loop struggle (spec §四 walkthrough)", () 
   });
 
   it("clusters hot regions on the 3-line bucket containing the for loop", () => {
-    expect(payload.hot_regions).toHaveLength(2);
-    expect(payload.hot_regions[0].lines).toBe("10-12"); // 行 12、13 同桶
+    // 桶按 3 行划分:行 12 → 桶 10-12(5 touches),行 13 → 桶 13-15(1),
+    // 行 5 → 桶 4-6(1);top-3 全保留,touches 并列时按起始行升序。
+    expect(payload.hot_regions).toHaveLength(3);
+    expect(payload.hot_regions[0].lines).toBe("10-12");
+    expect(payload.hot_regions[1].lines).toBe("4-6");
+    expect(payload.hot_regions[2].lines).toBe("13-15");
     expect(payload.hot_regions[0].touches).toBe(5);
     expect(payload.hot_regions[0].insert_chars).toBe(22);
     expect(payload.hot_regions[0].delete_chars).toBe(7);
@@ -482,12 +486,12 @@ describe("extractTypingSession: for-loop struggle (spec §四 walkthrough)", () 
   });
 
   it("counts the trailing idle gap into max gap and hesitations", () => {
-    // gaps: 40000,2000,78000,102000,38000 + 尾随 300000
+    // gaps: 40000,2000,78000,102000,18000,20000 + 尾随 300000
     expect(payload.typing.max_gap_ms).toBe(300_000);
-    expect(payload.typing.hesitations_5s).toBe(5);
-    // median of [2000,38000,40000,78000,102000,300000] → (40000+78000)/2
-    expect(payload.typing.gap_median_ms).toBe(59_000);
-    // p90 nearest-rank: ceil(0.9*6)-1 = idx 5 → 300000
+    expect(payload.typing.hesitations_5s).toBe(6);
+    // median of [2000,18000,20000,40000,78000,102000,300000] → idx 3 = 40000
+    expect(payload.typing.gap_median_ms).toBe(40_000);
+    // p90 nearest-rank: ceil(0.9*7)-1 = idx 6 → 300000
     expect(payload.typing.gap_p90_ms).toBe(300_000);
   });
 
@@ -632,8 +636,9 @@ describe("detectConstructs", () => {
   });
 
   it("matches multiple constructs and keeps the fixed order", () => {
+    // {k: v for k, v in items} 含冒号 → dict 标签;无方括号 for → 无 list comprehension
     const tags = detectConstructs("data = {k: v for k, v in items}\nslice = xs[1:5]");
-    expect(tags).toEqual(["dict", "list comprehension", "slicing"]);
+    expect(tags).toEqual(["for", "dict", "slicing"]);
   });
 
   it("does not mistake keywords inside identifiers (if → f-string)", () => {
@@ -976,7 +981,8 @@ git commit -m "feat: add pure typing-behavior feature extraction"
 - Test: `src/test/events/behaviorListener.test.ts`
 
 **Interfaces:**
-- Consumes: Task 3 的 `extractTypingSession` / `TypingSessionPayload` / `BehaviorChangeRecord` / `BehaviorDiagSnapshot` / `EndedBy` / `BEHAVIOR_CONSTANTS`
+
+- Consumes: Task 3 的 `extractTypingSession` / `TypingSessionPayload` / `BehaviorChangeRecord` / `BehaviorDiagSnapshot` / `EndedBy`
 - Produces(Task 5 与 extension.ts 消费):
   - `class BehaviorSessionTracker` — 纯状态机,时间戳由调用方显式传入:
     - `onEdit(file: string, line: number, ins: number, del: number, mirrorText: string, t: number): void`
@@ -985,10 +991,13 @@ git commit -m "feat: add pure typing-behavior feature extraction"
     - `onFileClosed(file: string, t: number): void`
     - `checkIdle(t: number): void`
     - `dispose(t: number): void` — 以 `deactivate` 结束所有开会话
-    - `drain(): TypingSessionPayload[]` — 取走已结束会话的 payload
+    - `drain(t: number): TypingSessionPayload[]` — 先把续会话窗口已过期的挂起会话落定为 payload,再取走全部待发 payload
   - `function createBehaviorListener(writer: L1Writer): vscode.Disposable`(Task 5 实现主体)
 
 设计说明(执行者需知):状态机与 vscode 接线分离在同一文件——tracker 不触碰任何 vscode API(时间全部入参),可零 mock 测试;`createBehaviorListener` 是薄接线(订阅/过滤/时钟),沿用 editListener 的模式但不写单测(与现有 `editListener`/`diagnosticsListener` 无单测的先例一致,行为断言全部落在 tracker 测试;这偏离 spec §十一测试 2 的"mock vscode 事件"措辞,但覆盖了其中列出的全部行为:边界触发提取、续会话、dispose 清理——L1 写入接线仅 3 行,由 Task 6 手动验收覆盖)。
+
+**发射模型(park + materialize,2026-09-12 评审后修订):**
+会话边界触发时**不立即**提取写 L1,而是把已结束会话挂起(closed 槽位)进入 3min 续会话窗口;窗口内同文件再编辑 → 续会话(沿用原缓冲与起止时间,spec §五);窗口过期/被其它会话让位/dispose 时才提取为 payload 入队。这样"对照抄代码来回切"场景在 trace 里只出现**一条**延续会话事件(而非先发一条再发重叠的一条),打字统计不被重复计数;代价是 payload 落盘最多延迟 ~3min(或到 idle tick / dispose),对批量 Update 流程无感。`<3` 变更的会话在 endSession 时直接丢弃(spec §八),不可续。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -999,19 +1008,22 @@ import { describe, it, expect } from "vitest";
 import { BehaviorSessionTracker } from "../../events/behaviorListener";
 import type { TypingSessionPayload } from "../../events/behaviorFeatures";
 
-function drain(tracker: BehaviorSessionTracker): TypingSessionPayload[] {
-  return tracker.drain();
+const RESUME_WINDOW = 3 * 60_000; // 与 tracker DEFAULTS.resumeWindowMs 一致
+
+function drain(tracker: BehaviorSessionTracker, t: number): TypingSessionPayload[] {
+  return tracker.drain(t);
 }
 
 describe("BehaviorSessionTracker", () => {
-  it("ends a session on editor switch and emits one payload", () => {
+  it("ends a session on editor switch and emits one payload after the resume window", () => {
     const tracker = new BehaviorSessionTracker();
     tracker.onEdit("main.py", 1, 5, 0, "print(1)", 0);
     tracker.onEdit("main.py", 1, 0, 1, "print()", 1_000);
     tracker.onEdit("main.py", 2, 3, 0, "print()\nx=1", 2_000);
     tracker.onEditorSwitch("main.py", 3_000);
 
-    const out = drain(tracker);
+    expect(drain(tracker, 3_000)).toHaveLength(0); // 挂起中,等待续会话窗口
+    const out = drain(tracker, 3_000 + RESUME_WINDOW + 1);
     expect(out).toHaveLength(1);
     expect(out[0].file).toBe("main.py");
     expect(out[0].ended_by).toBe("editor_switch");
@@ -1019,84 +1031,166 @@ describe("BehaviorSessionTracker", () => {
     expect(out[0].duration_ms).toBe(3_000);
   });
 
-  it("drops sessions with fewer than 3 changes", () => {
-    const tracker = new BehaviorSessionTracker();
-    tracker.onEdit("main.py", 1, 5, 0, "x", 0);
-    tracker.onEdit("main.py", 1, 0, 1, "", 1_000);
-    tracker.onEditorSwitch("main.py", 2_000);
-    expect(drain(tracker)).toHaveLength(0);
+  it("drops <3-change sessions outright for every end reason", () => {
+    // editor_switch
+    const t1 = new BehaviorSessionTracker();
+    t1.onEdit("main.py", 1, 5, 0, "x", 0);
+    t1.onEdit("main.py", 1, 0, 1, "", 1_000);
+    t1.onEditorSwitch("main.py", 2_000);
+    expect(drain(t1, 2_000 + RESUME_WINDOW + 1)).toHaveLength(0);
+
+    // idle
+    const t2 = new BehaviorSessionTracker();
+    t2.onEdit("main.py", 1, 5, 0, "x", 0);
+    t2.onEdit("main.py", 1, 0, 1, "", 100_000);
+    t2.checkIdle(400_000);
+    expect(drain(t2, 400_000 + RESUME_WINDOW + 1)).toHaveLength(0);
+
+    // editor_close
+    const t3 = new BehaviorSessionTracker();
+    t3.onEdit("main.py", 1, 5, 0, "x", 0);
+    t3.onEdit("main.py", 1, 0, 1, "", 1_000);
+    t3.onFileClosed("main.py", 2_000);
+    expect(drain(t3, 2_000 + RESUME_WINDOW + 1)).toHaveLength(0);
+
+    // deactivate(dispose 即时落定,无需等窗口)
+    const t4 = new BehaviorSessionTracker();
+    t4.onEdit("main.py", 1, 5, 0, "x", 0);
+    t4.onEdit("main.py", 1, 0, 1, "", 1_000);
+    t4.dispose(2_000);
+    expect(drain(t4, 2_000)).toHaveLength(0);
+
+    // max_duration(拆分点的 <3 半段同样丢弃)
+    const t5 = new BehaviorSessionTracker();
+    t5.onEdit("main.py", 1, 5, 0, "x", 0);
+    t5.onEdit("main.py", 1, 0, 1, "", 91 * 60_000); // 超 90min → 拆分
+    t5.onEditorSwitch("main.py", 91 * 60_000 + 1_000);
+    expect(drain(t5, 91 * 60_000 + 1_000 + RESUME_WINDOW + 1)).toHaveLength(0);
   });
 
   it("ends sessions on idle and includes the trailing gap in max gap", () => {
     const tracker = new BehaviorSessionTracker();
     tracker.onEdit("main.py", 1, 2, 0, "ab", 0);
     tracker.onEdit("main.py", 1, 2, 0, "abcd", 100_000);
-    tracker.checkIdle(400_000); // 距最后编辑 300_000ms = 5min
+    tracker.onEdit("main.py", 2, 2, 0, "abcd\ncd", 200_000);
+    tracker.checkIdle(500_000); // 距最后编辑 300_000ms = 5min
 
-    const out = drain(tracker);
+    expect(drain(tracker, 500_000)).toHaveLength(0); // 挂起中
+    const out = drain(tracker, 500_000 + RESUME_WINDOW + 1);
     expect(out).toHaveLength(1);
     expect(out[0].ended_by).toBe("idle");
-    expect(out[0].duration_ms).toBe(400_000);
+    expect(out[0].duration_ms).toBe(500_000);
     expect(out[0].typing.max_gap_ms).toBe(300_000); // 尾随空闲计入
   });
 
   it("does not end sessions below the idle threshold", () => {
     const tracker = new BehaviorSessionTracker();
-    tracker.onEdit("main.py", 1, 2, 0, "ab", 300_000);
+    tracker.onEdit("main.py", 1, 2, 0, "ab", 0);
+    tracker.onEdit("main.py", 1, 2, 0, "abc", 100_000);
+    tracker.onEdit("main.py", 2, 2, 0, "abc\nde", 300_000);
     tracker.checkIdle(599_000); // 距最后编辑 299s < 5min
-    expect(drain(tracker)).toHaveLength(0);
+    expect(drain(tracker, 599_000 + RESUME_WINDOW + 1)).toHaveLength(0);
   });
 
   it("ends a session at max duration and starts a fresh one", () => {
     const tracker = new BehaviorSessionTracker();
     tracker.onEdit("main.py", 1, 2, 0, "ab", 0);
-    tracker.onEdit("main.py", 1, 2, 0, "abcd", 91 * 60_000); // 超 90min
-    tracker.onEditorSwitch("main.py", 91 * 60_000 + 1_000);
+    tracker.onEdit("main.py", 1, 2, 0, "abc", 1_000);
+    tracker.onEdit("main.py", 2, 2, 0, "abc\nde", 2_000);
+    tracker.onEdit("main.py", 1, 2, 0, "ab", 91 * 60_000); // 超 90min → 拆分
+    tracker.onEdit("main.py", 1, 2, 0, "abc", 91 * 60_000 + 500);
+    tracker.onEdit("main.py", 3, 2, 0, "abc\nde\nfg", 91 * 60_000 + 1_000);
+    tracker.onEditorSwitch("main.py", 91 * 60_000 + 2_000);
 
-    const out = drain(tracker);
+    expect(drain(tracker, 91 * 60_000 + 2_000)).toHaveLength(0); // 都挂起中
+    const out = drain(tracker, 91 * 60_000 + 2_000 + RESUME_WINDOW + 1);
     expect(out).toHaveLength(2);
     expect(out[0].ended_by).toBe("max_duration");
     expect(out[0].duration_ms).toBe(91 * 60_000);
+    expect(out[0].typing.changes).toBe(3);
     // 第二条:新会话从 91min 重新计时
-    expect(out[1].duration_ms).toBe(1_000);
+    expect(out[1].typing.changes).toBe(3);
+    expect(out[1].duration_ms).toBe(2_000);
   });
 
   it("resumes a same-file session within the 3min window (single buffer, original start)", () => {
     const tracker = new BehaviorSessionTracker();
     tracker.onEdit("a.py", 1, 5, 0, "x", 0);
-    tracker.onEditorSwitch("a.py", 100_000); // a 结束(emit)
+    tracker.onEdit("a.py", 1, 5, 0, "xx", 10_000);
+    tracker.onEdit("a.py", 1, 5, 0, "xxx", 20_000);
+    tracker.onEditorSwitch("a.py", 100_000); // a 结束 → 挂起,未发射
     tracker.onEdit("a.py", 1, 3, 0, "xy", 150_000); // 2.5min 内回来 → 续会话
     tracker.onEditorSwitch("a.py", 200_000);
 
-    const out = drain(tracker);
-    expect(out).toHaveLength(1); // 续会话,不是两条
+    expect(drain(tracker, 200_000)).toHaveLength(0); // 挂起中
+    const out = drain(tracker, 200_000 + RESUME_WINDOW + 1);
+    expect(out).toHaveLength(1); // 续会话只发一条,不是两条
     expect(out[0].duration_ms).toBe(200_000); // 起止沿用原会话
-    expect(out[0].typing.changes).toBe(2);    // 缓冲沿用
+    expect(out[0].typing.changes).toBe(4);    // 缓冲沿用
   });
 
   it("does not resume when another file's session intervened", () => {
     const tracker = new BehaviorSessionTracker();
     tracker.onEdit("a.py", 1, 5, 0, "x", 0);
-    tracker.onEditorSwitch("a.py", 100_000);  // a 结束
+    tracker.onEdit("a.py", 1, 5, 0, "xx", 10_000);
+    tracker.onEdit("a.py", 1, 5, 0, "xxx", 20_000);
+    tracker.onEditorSwitch("a.py", 100_000);  // a 结束 → 挂起
     tracker.onEdit("b.py", 1, 5, 0, "y", 120_000);
-    tracker.onEditorSwitch("b.py", 130_000);  // b 结束 → lastClosed 变为 b
-    tracker.onEdit("a.py", 1, 3, 0, "xy", 140_000); // a 回来 → 不续
-    tracker.onEditorSwitch("a.py", 150_000);
+    tracker.onEdit("b.py", 1, 5, 0, "yy", 125_000);
+    tracker.onEdit("b.py", 1, 5, 0, "yyy", 129_000);
+    tracker.onEditorSwitch("b.py", 130_000);  // b 结束 → a 让位落定,b 挂起
+    tracker.onEdit("a.py", 1, 3, 0, "xy", 140_000); // a 回来 → 不续,全新会话
+    tracker.onEditorSwitch("a.py", 150_000);  // a' 结束(1 次变更 → 丢弃)
 
-    const out = drain(tracker);
-    expect(out).toHaveLength(3);
-    expect(out[2].duration_ms).toBe(10_000); // a' 是全新会话
+    const out = drain(tracker, 150_000 + RESUME_WINDOW + 1);
+    expect(out).toHaveLength(2); // a 原始 payload + b;a' 因 <3 变更被丢弃
+    expect(out[0].file).toBe("a.py");
+    expect(out[0].duration_ms).toBe(100_000);
+    expect(out[1].file).toBe("b.py");
+    expect(out[1].duration_ms).toBe(10_000);
   });
 
-  it("emits deactivate payloads on dispose", () => {
+  it("does not resume after the 3min window expires", () => {
+    const tracker = new BehaviorSessionTracker();
+    tracker.onEdit("a.py", 1, 5, 0, "x", 0);
+    tracker.onEdit("a.py", 1, 5, 0, "xx", 10_000);
+    tracker.onEdit("a.py", 1, 5, 0, "xxx", 20_000);
+    tracker.onEditorSwitch("a.py", 100_000); // a 挂起
+    tracker.onEdit("a.py", 1, 3, 0, "xy", 280_001); // 3min+1ms → 窗口已过
+    tracker.onEdit("a.py", 1, 3, 0, "xyz", 280_002);
+    tracker.onEdit("a.py", 1, 3, 0, "xyzw", 280_500);
+    tracker.onEditorSwitch("a.py", 281_000);
+
+    const out = drain(tracker, 281_000 + RESUME_WINDOW + 1);
+    expect(out).toHaveLength(2); // 原会话照常落定,新会话独立
+    expect(out[0].duration_ms).toBe(100_000);
+    expect(out[0].typing.changes).toBe(3);
+    expect(out[1].duration_ms).toBe(999); // 281_000 - 280_001
+    expect(out[1].typing.changes).toBe(3);
+  });
+
+  it("emits deactivate payloads on dispose without waiting for the resume window", () => {
     const tracker = new BehaviorSessionTracker();
     tracker.onEdit("main.py", 1, 5, 0, "x", 0);
     tracker.onEdit("main.py", 1, 5, 0, "xx", 1_000);
     tracker.onEdit("main.py", 1, 5, 0, "xxx", 2_000);
     tracker.dispose(3_000);
-    const out = drain(tracker);
+    const out = drain(tracker, 3_000);
     expect(out).toHaveLength(1);
     expect(out[0].ended_by).toBe("deactivate");
+  });
+
+  it("closes a session on file close", () => {
+    const tracker = new BehaviorSessionTracker();
+    tracker.onEdit("main.py", 1, 5, 0, "x", 0);
+    tracker.onEdit("main.py", 1, 5, 0, "xx", 1_000);
+    tracker.onEdit("main.py", 1, 5, 0, "xxx", 2_000);
+    tracker.onFileClosed("main.py", 3_000);
+
+    const out = drain(tracker, 3_000 + RESUME_WINDOW + 1);
+    expect(out).toHaveLength(1);
+    expect(out[0].ended_by).toBe("editor_close");
+    expect(out[0].typing.changes).toBe(3);
   });
 
   it("marks truncated at the change cap and stops buffering further records", () => {
@@ -1105,7 +1199,7 @@ describe("BehaviorSessionTracker", () => {
       tracker.onEdit("main.py", 1, 1, 0, "a", i);
     }
     tracker.onEditorSwitch("main.py", 5_002);
-    const out = drain(tracker);
+    const out = drain(tracker, 5_002 + RESUME_WINDOW + 1);
     expect(out).toHaveLength(1);
     expect(out[0].truncated).toBe(true);
     expect(out[0].typing.changes).toBe(5_000);
@@ -1121,7 +1215,7 @@ describe("BehaviorSessionTracker", () => {
     tracker.onDiagnostics("main.py", ["expected ':' (main.py, line 12)"], 5_000); // 重复快照
     tracker.onEditorSwitch("main.py", 6_000);
 
-    const out = drain(tracker);
+    const out = drain(tracker, 6_000 + RESUME_WINDOW + 1);
     expect(out).toHaveLength(1);
     expect(out[0].diagnostics.errors_seen).toHaveLength(1);
     expect(out[0].diagnostics.errors_seen[0].msg).toBe("expected ':'");
@@ -1145,8 +1239,16 @@ Expected: FAIL——`BehaviorSessionTracker` 不存在。
 // BehaviorSessionTracker is a pure state machine: one open session per .py
 // file, ended by editor switch / file close / idle ≥5min / duration ≥90min /
 // dispose ("deactivate"). Time is always passed in by the caller — tests use
-// synthetic timestamps, the wiring passes Date.now(). Ended sessions drain
-// as typing_session payloads; sessions with <3 changes are dropped (spec §八).
+// synthetic timestamps, the wiring passes Date.now().
+//
+// Emission is deferred (park + materialize): an ended session waits in the
+// single `closed` slot for the 3min resume window (spec §五 — a same-file
+// re-activation within the window continues that session, reusing its
+// buffer and start time). The payload is extracted only when the window
+// expires (drain), when another session needs the slot (endSession), or on
+// dispose — so a resumed stretch appears in the trace as ONE typing_session
+// event, never as two overlapping ones. Sessions with <3 changes are
+// dropped outright at endSession (spec §八) and are not resumable.
 //
 // createBehaviorListener wires vscode events onto the tracker (change /
 // diagnostics / active editor / close / idle timer) and appends drained
@@ -1157,7 +1259,6 @@ import type { L1Writer } from "../storage/l1Writer";
 import { EVENT_KINDS } from "../constants";
 import {
   extractTypingSession,
-  BEHAVIOR_CONSTANTS,
   type TypingSessionPayload,
   type BehaviorChangeRecord,
   type BehaviorDiagSnapshot,
@@ -1182,6 +1283,16 @@ interface OpenSession {
   truncated: boolean;
 }
 
+// A session that has ended but is held for the 3min resume window. Only the
+// most recent closed session is resumable (spec §五: no other file's session
+// may have intervened).
+interface ClosedSession {
+  file: string;
+  endT: number;
+  endedBy: EndedBy;
+  session: OpenSession;
+}
+
 export class BehaviorSessionTracker {
   private idleMs: number;
   private maxSessionMs: number;
@@ -1190,10 +1301,7 @@ export class BehaviorSessionTracker {
   private maxChanges: number;
 
   private open = new Map<string, OpenSession>();
-  // Most recent emitted session-end, any file. Resume (spec §五) applies
-  // only when THIS file re-activates within the window and no other file's
-  // session closed afterwards (i.e. lastClosed still points at it).
-  private lastClosed: { file: string; endT: number; session: OpenSession } | null = null;
+  private closed: ClosedSession | null = null;
   private ended: TypingSessionPayload[] = [];
 
   constructor(deps: Partial<typeof DEFAULTS> = {}) {
@@ -1207,9 +1315,10 @@ export class BehaviorSessionTracker {
   onEdit(file: string, line: number, ins: number, del: number, mirrorText: string, t: number): void {
     let s = this.open.get(file);
     if (!s) {
-      const last = this.lastClosed;
-      if (last && last.file === file && t - last.endT <= this.resumeWindowMs) {
-        s = last.session; // 续会话:沿用原缓冲与起止时间
+      const c = this.closed;
+      if (c && c.file === file && t - c.endT <= this.resumeWindowMs) {
+        s = c.session; // 续会话:沿用原缓冲与起止时间(spec §五)
+        this.closed = null;
         s.lastMirror = mirrorText;
         s.lastActivityMs = t;
         this.open.set(file, s);
@@ -1269,35 +1378,59 @@ export class BehaviorSessionTracker {
     }
   }
 
-  /** Extension shutdown: end every open session as "deactivate". */
+  /** Extension shutdown: end every open session as "deactivate" and flush
+ *  everything (open sessions AND any session parked for its resume window)
+ *  so nothing is lost on shutdown. */
   dispose(t: number): void {
     for (const s of [...this.open.values()]) {
       this.endSession(s, "deactivate", t);
     }
+    this.materializeClosed();
   }
 
-  /** Take all payloads emitted since the last drain. */
-  drain(): TypingSessionPayload[] {
+  /**
+   * Take all payloads whose resume window has expired as of `t`, plus any
+   * emitted since the last drain. The wiring calls this with Date.now()
+   * after every event batch, so a parked payload lands in the trace at the
+   * first event/drain after its window expires.
+   */
+  drain(t: number): TypingSessionPayload[] {
+    this.materializeExpired(t);
     return this.ended.splice(0);
+  }
+
+  // An ended session waits in `closed` for the resume window; the payload
+  // is extracted (materialized) when the window expires, when another
+  // session needs the slot, or at dispose. A resumed session never
+  // materializes its pre-resume state — the merged session emits once.
+  private materializeExpired(t: number): void {
+    if (this.closed && t - this.closed.endT > this.resumeWindowMs) {
+      this.materializeClosed();
+    }
+  }
+
+  private materializeClosed(): void {
+    const c = this.closed;
+    if (!c) return;
+    this.closed = null;
+    this.ended.push(extractTypingSession({
+      file: c.file,
+      startMs: c.session.startMs,
+      endMs: c.endT,
+      endedBy: c.endedBy,
+      truncated: c.session.truncated,
+      changes: c.session.changes,
+      diagnostics: c.session.diagnostics,
+      finalText: c.session.lastMirror,
+    }));
   }
 
   private endSession(s: OpenSession, endedBy: EndedBy, t: number): void {
     this.open.delete(s.file);
-    const payload = extractTypingSession({
-      file: s.file,
-      startMs: s.startMs,
-      endMs: t,
-      endedBy,
-      truncated: s.truncated,
-      changes: s.changes,
-      diagnostics: s.diagnostics,
-      finalText: s.lastMirror,
-    });
-    // 空会话(<3 次变更)不写事件(spec §八);且只有产出事件的关闭才可续。
-    if (s.changes.length >= this.minChanges) {
-      this.ended.push(payload);
-      this.lastClosed = { file: s.file, endT: t, session: s };
-    }
+    this.materializeClosed(); // 单槽位让位:上一个挂起会话此时落定为最终 payload
+    // 空会话(<3 次变更)不写事件也不可续(spec §八)。
+    if (s.changes.length < this.minChanges) return;
+    this.closed = { file: s.file, endT: t, endedBy, session: s };
   }
 }
 
@@ -1344,7 +1477,7 @@ export function createBehaviorListener(writer: L1Writer): vscode.Disposable {
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
   const flushEnded = () => {
-    for (const payload of tracker.drain()) {
+    for (const payload of tracker.drain(Date.now())) {
       void writer.append("behavior", EVENT_KINDS.typingSession, payload);
     }
   };
@@ -1509,4 +1642,4 @@ git status   # 确认无遗漏文件;验收发现的问题回到对应任务修�
 
 - **Spec 覆盖:** §四数据流→Task 3/4/5;§五会话/边界/续会话→Task 4(+idle 尾随间隔 Task 3 断言);§六 schema/constructs/规范化→Task 3;§七 SURFACE_FOCUS→Task 1(逐字);修订说明 1(不做 renderMasteryMap)→ 全计划无渲染改动,document.test.ts 回归由全量测试覆盖;§八边界表→Task 3/4 对应用例(空会话/truncated/≤4 字符/IME/非 .py 不跟踪=接线过滤);§九无设置→无 config 改动;§十落点表→各任务 Files 对齐(唯一补充:sectionLabels.ts 三个中文标签,与既有"所有 L2 节都有中文名"的模式一致);§十一测试 1/2→Task 3/4(测试 2 的 vscode mock 改为纯状态机断言,理由见 Task 4 设计说明),测试 3→全量回归含 document.test.ts;验收→Task 6。
 - **占位符扫描:** 无 TBD/TODO;Task 5 前的 `createBehaviorListener` 占位是任务间显式交接(Task 4 Step 3 注明 Task 5 填充),非计划缺口。
-- **类型一致性:** `TypingSessionPayload`/`BehaviorChangeRecord`/`EndedBy` 在 Task 3 定义、Task 4/5 引用,字段名逐一对齐;`drain()`/`onEdit(file, line, ins, del, mirrorText, t)` 签名在 Task 4 测试与 Task 5 接线中一致;`EVENT_KINDS.typingSession` 由 Task 1 定义、Task 5 使用。
+- **类型一致性:** `TypingSessionPayload`/`BehaviorChangeRecord`/`EndedBy` 在 Task 3 定义、Task 4/5 引用,字段名逐一对齐;`drain(t)`/`onEdit(file, line, ins, del, mirrorText, t)` 签名在 Task 4 测试与 Task 5 接线中一致;`EVENT_KINDS.typingSession` 由 Task 1 定义、Task 5 使用。
