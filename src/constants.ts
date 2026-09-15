@@ -75,6 +75,12 @@ export const EVENT_KINDS = {
 export const SURFACES = ["edit", "run", "chat", "debug", "diag", "behavior"] as const;
 export type Surface = (typeof SURFACES)[number];
 
+// Surfaces the L2/L3 consolidation pipeline actually processes. Narrowing
+// this (instead of SURFACES) keeps L1 trace collection and the shortname-ref
+// whitelist intact — edit/run/debug/behavior traces still accumulate on disk
+// and can be folded back in by widening this list again.
+export const CONSOLIDATION_SURFACES = ["chat", "diag"] as const;
+
 export const STORAGE_DIRS = {
   trace: "trace", // trace/<surface>/YYYY-MM-DD.jsonl
   chats: "chats", // chats/sessions/<id>.json, chats/index.json

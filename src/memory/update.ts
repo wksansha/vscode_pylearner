@@ -94,7 +94,7 @@ export async function updateL2(
     // layout (or with stale L3 refs) should be cleaned up even when no new
     // facts were synthesized.
     if (MEMORY_SETTINGS.merge.autoAfterUpdate) {
-      await runMerge(modeDeps(deps), "L2", surface);
+      await runPassBestEffort(deps, "merge_failed", () => runMerge(modeDeps(deps), "L2", surface));
     }
     emit(deps, { stage: "done", no_new_input: true, facts_added: 0 });
     return emptyResult("L2", surface, true);
@@ -187,14 +187,16 @@ export async function updateL2(
 
   // Post-update passes: collapse newly-accumulated duplicates, then
   // re-serialize footnotes (and migrate any legacy L3 refs for L3 only).
+  // Best-effort: a dedup LLM timeout must not discard the facts already
+  // saved — the next update that adds facts will retry the pass.
   if (MEMORY_SETTINGS.dedup.autoAfterUpdate && factsAdded > 0) {
     const dedupStart = Date.now();
-    await runDedup(modeDeps(deps), "L2", surface, { userLabel });
+    await runPassBestEffort(deps, "dedup_failed", () => runDedup(modeDeps(deps), "L2", surface, { userLabel }));
     emit(deps, { stage: "dedup_finished", elapsed_ms: Date.now() - dedupStart });
   }
   if (MEMORY_SETTINGS.merge.autoAfterUpdate) {
     const mergeStart = Date.now();
-    await runMerge(modeDeps(deps), "L2", surface);
+    await runPassBestEffort(deps, "merge_failed", () => runMerge(modeDeps(deps), "L2", surface));
     emit(deps, { stage: "merge_finished", elapsed_ms: Date.now() - mergeStart });
   }
 
@@ -239,7 +241,7 @@ export async function updateL3(
   if (newCount === 0) {
     await deps.saveL3Meta(slot, { last_update_at: nowIso(), seen_l2_entry_ids: seenNow });
     if (MEMORY_SETTINGS.merge.autoAfterUpdate) {
-      await runMerge(modeDeps(deps), "L3", slot);
+      await runPassBestEffort(deps, "merge_failed", () => runMerge(modeDeps(deps), "L3", slot));
     }
     emit(deps, { stage: "done", no_new_input: true, facts_added: 0 });
     return emptyResult("L3", slot, true);
@@ -319,10 +321,10 @@ export async function updateL3(
   await deps.saveL3Meta(slot, { last_update_at: nowIso(), seen_l2_entry_ids: seenNow });
 
   if (MEMORY_SETTINGS.dedup.autoAfterUpdate && factsAdded > 0) {
-    await runDedup(modeDeps(deps), "L3", slot, { userLabel });
+    await runPassBestEffort(deps, "dedup_failed", () => runDedup(modeDeps(deps), "L3", slot, { userLabel }));
   }
   if (MEMORY_SETTINGS.merge.autoAfterUpdate) {
-    await runMerge(modeDeps(deps), "L3", slot);
+    await runPassBestEffort(deps, "merge_failed", () => runMerge(modeDeps(deps), "L3", slot));
   }
 
   emit(deps, { stage: "done", facts_added: factsAdded, refs_dropped: refsDropped, chunks_processed: chunks.length });
@@ -392,6 +394,22 @@ function emit(deps: ConsolidatorDeps, event: Record<string, unknown>): void {
     deps.onEvent?.(event);
   } catch {
     // event consumer failures never abort a run
+  }
+}
+
+/** Best-effort post-update pass wrapper: facts are already saved by the time
+ *  dedup/merge run, so a failure there (e.g. a dedup LLM timeout on a large
+ *  doc) must not fail the whole update — the pass is retried on the next
+ *  update that adds facts. */
+async function runPassBestEffort(
+  deps: ConsolidatorDeps,
+  failStage: string,
+  pass: () => Promise<unknown>
+): Promise<void> {
+  try {
+    await pass();
+  } catch (err) {
+    emit(deps, { stage: failStage, error: err instanceof Error ? err.message : String(err) });
   }
 }
 

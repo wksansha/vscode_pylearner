@@ -17,7 +17,7 @@ import { Document } from "./document";
 import type { L3Slot } from "./paths";
 
 export interface TranslateDeps {
-  callLlm(system: string, user: string): Promise<string>;
+  callLlm(system: string, user: string, context?: string): Promise<string>;
   loadL3Doc(slot: L3Slot): Promise<Document | null>;
   saveL3Doc(slot: L3Slot, doc: Document): Promise<void>;
   onEvent?: (event: Record<string, unknown>) => void;
@@ -112,7 +112,7 @@ export async function translateL3Doc(
       try {
         const callStart = Date.now();
         const context = `translate:pass${pass}:batch${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(pending.length / BATCH_SIZE)}`;
-        const raw = await deps.callLlm(TRANSLATE_SYSTEM, payload);
+        const raw = await deps.callLlm(TRANSLATE_SYSTEM, payload, context);
         const llmElapsed = Date.now() - callStart;
         if (deps.onEvent) {
           deps.onEvent({

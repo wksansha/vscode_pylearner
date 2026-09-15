@@ -7,7 +7,7 @@
 // (pylearner.updateProfile / Profile panel) bypasses this gate entirely.
 
 import * as vscode from "vscode";
-import { CONFIG_KEYS, SURFACES } from "../constants";
+import { CONFIG_KEYS, CONSOLIDATION_SURFACES } from "../constants";
 import type { LlmRouter } from "../llm/router";
 import { loadL2Meta } from "../memory/store";
 import { DEFAULT_AUTO_REFRESH, shouldAutoRefresh } from "../memory/settings";
@@ -68,10 +68,10 @@ export class ProfileRefresher {
     };
   }
 
-  /** Count trace events across surfaces not yet seen by L2 consolidation. */
+  /** Count trace events on consolidated surfaces not yet seen by L2. */
   private async countNewEvents(): Promise<number> {
     let total = 0;
-    for (const surface of SURFACES) {
+    for (const surface of CONSOLIDATION_SURFACES) {
       const meta = await loadL2Meta(this.storageUri, surface);
       const seen = new Set(meta.seen_entity_refs);
       const entities = await readTraceEntities(this.storageUri, surface);

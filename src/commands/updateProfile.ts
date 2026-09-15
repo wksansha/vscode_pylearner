@@ -6,7 +6,7 @@
 // generated profile.md in the editor as a preview.
 
 import * as vscode from "vscode";
-import { CMD_IDS, SECRET_KEYS, SURFACES } from "../constants";
+import { CMD_IDS, SECRET_KEYS, CONSOLIDATION_SURFACES } from "../constants";
 import type { LlmRouter } from "../llm/router";
 import { callLlmWithRetry, DEFAULT_RETRY_CONFIG } from "../llm/retry";
 import * as store from "../memory/store";
@@ -22,7 +22,7 @@ function makeDeps(storageUri: vscode.Uri, router: LlmRouter, apiKey: string, onE
     readEntities: (surface) => readTraceEntities(storageUri, surface),
     loadAllL2Docs: async () => {
       const docs: Record<string, Document> = {};
-      for (const surface of SURFACES) {
+      for (const surface of CONSOLIDATION_SURFACES) {
         const doc = await store.loadL2Doc(storageUri, surface);
         if (doc) docs[surface] = doc;
       }
@@ -150,9 +150,9 @@ export async function runProfileUpdate(
   };
 
   checkCancelled();
-  // Process all L2 surfaces in parallel to reduce total runtime
+  // Consolidate only the active surfaces, in parallel, to reduce total runtime
   const l2Start = Date.now();
-  const surfaceResults = await Promise.all(SURFACES.map(surface => updateL2(deps, surface)));
+  const surfaceResults = await Promise.all(CONSOLIDATION_SURFACES.map(surface => updateL2(deps, surface)));
   const l2Elapsed = Date.now() - l2Start;
   stageTimes.push({ stage: "all_L2_complete", elapsed_ms: l2Elapsed });
 

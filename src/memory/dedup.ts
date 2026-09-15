@@ -26,7 +26,7 @@ import { MEMORY_SETTINGS } from "./settings";
 export interface DedupDeps {
   loadDoc(layer: Layer, key: string): Promise<Document | null>;
   saveDoc(layer: Layer, key: string, doc: Document): Promise<void>;
-  callLlm(system: string, user: string): Promise<string>;
+  callLlm(system: string, user: string, context?: string): Promise<string>;
   onEvent?(event: Record<string, unknown>): void;
 }
 
@@ -105,7 +105,8 @@ export async function runDedup(
 
     const system = buildDedupSystem(userLabel, today);
     const user = buildDedupUser(renderNumbered(view), iterationsRun, iterations);
-    const raw = await deps.callLlm(system, user);
+    const ctx = `${layer}:${key}:dedup${iterationsRun > 1 ? `-${iterationsRun}` : ""}`;
+    const raw = await deps.callLlm(system, user, ctx);
     const edits = parseEditsPayload(raw);
 
     if (edits.length === 0) {

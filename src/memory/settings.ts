@@ -42,7 +42,7 @@ export interface MemorySettings {
 }
 
 export const MEMORY_SETTINGS: MemorySettings = {
-  update: { l2Budget: 8, l3Budget: 4 },
+  update: { l2Budget: 2, l3Budget: 2 },
   chunking: {
     overlapRatio: 0.1,
     boundary: "paragraph",
