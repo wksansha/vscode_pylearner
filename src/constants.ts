@@ -22,12 +22,17 @@ export const CONFIG_KEYS = {
   monitorRun: "pylearner.monitor.runEnabled",
   autoRefreshThreshold: "pylearner.memory.autoRefreshThreshold",
   autoRefreshCooldownMs: "pylearner.memory.autoRefreshCooldownMs",
+  teacherUrl: "pylearner.teacher.url",
+  teacherEnabled: "pylearner.teacher.enabled",
 } as const;
 
 // API key lives in SecretStorage (never in settings.json — Settings Sync
 // would copy it to the user's account otherwise).
 export const SECRET_KEYS = {
   llmApiKey: "pylearner.llm.apiKey",
+  studentId: "pylearner.student.id",
+  studentName: "pylearner.student.name",
+  classId: "pylearner.student.classId",
 } as const;
 
 export const MSG_TYPES = {

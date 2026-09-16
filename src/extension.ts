@@ -43,6 +43,7 @@ import { createBehaviorListener } from "./events/behaviorListener";
 import { registerUpdateProfileCommand, registerResetProfileCommand } from "./commands/updateProfile";
 import { ProfileRefresher } from "./commands/autoRefresh";
 import { registerMemoryGraphCommand } from "./commands/memoryGraph";
+import { createTeacherReporter } from "./teacher/reporter";
 
 // Global error handlers to prevent uncaught exceptions from crashing the extension host
 process.on("uncaughtException", (err) => {
@@ -116,6 +117,27 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   const l1Writer = new L1Writer(context.globalStorageUri);
   const chatStore = new ChatStore(context.globalStorageUri);
   console.log("[pylearner] core services initialized");
+
+  // 初始化教师端上报器（如果启用）
+  const teacherEnabled = vscode.workspace
+    .getConfiguration("pylearner")
+    .get<boolean>(CONFIG_KEYS.teacherEnabled, false);
+  if (teacherEnabled) {
+    const teacherUrl =
+      vscode.workspace
+        .getConfiguration("pylearner")
+        .get<string>(CONFIG_KEYS.teacherUrl, "http://localhost:3000") ||
+      "http://localhost:3000";
+    const studentId =
+      context.secrets.get(SECRET_KEYS.studentId) || vscode.env.machineId;
+    const studentName = context.secrets.get(SECRET_KEYS.studentName) || "Unknown";
+    const classId = context.secrets.get(SECRET_KEYS.classId);
+
+    l1Writer.setTeacherReporter(
+      createTeacherReporter({ teacherUrl, studentId, studentName, classId })
+    );
+    console.log("[pylearner] teacher reporter enabled");
+  }
 
   // Factory function - creates a fresh router with current config on demand
   const routerFactory = () => new LlmRouter();

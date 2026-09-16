@@ -4,12 +4,21 @@ import type { Surface } from "../constants";
 import type { TraceEvent } from "../events/types";
 import { makeEvent } from "../events/types";
 
+export interface TeacherReporter {
+  report(event: TraceEvent): Promise<void>;
+}
+
 export class L1Writer {
   private baseUri: vscode.Uri;
   private locks: Map<string, Promise<void>> = new Map();
+  private reporter?: TeacherReporter;
 
   constructor(storageUri: vscode.Uri) {
     this.baseUri = vscode.Uri.joinPath(storageUri, "trace");
+  }
+
+  setTeacherReporter(reporter: TeacherReporter | undefined) {
+    this.reporter = reporter;
   }
 
   async append(
@@ -22,6 +31,13 @@ export class L1Writer {
       new Date().toISOString(), sessionId
     );
     await this.writeEvent(event);
+
+    // 异步上报到教师端（非阻塞，失败不影响 L1 持久化）
+    if (this.reporter && shouldReportToTeacher(surface, kind)) {
+      this.reporter.report(event).catch((err: unknown) => {
+        console.warn("[L1Writer] 教师端上报失败:", err instanceof Error ? err.message : String(err));
+      });
+    }
   }
 
   private async writeEvent(event: TraceEvent): Promise<void> {
@@ -56,4 +72,11 @@ export class L1Writer {
     this.locks.set(event.surface, next.catch(() => {}));
     await next;
   }
+}
+
+function shouldReportToTeacher(surface: Surface, kind: string): boolean {
+  return (
+    (surface === "diag" && kind === "diagnostics_change") ||
+    (surface === "run" && (kind === "execution_success" || kind === "execution_error"))
+  );
 }
