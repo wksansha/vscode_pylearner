@@ -3,6 +3,8 @@ export interface LlmConfig {
   model: string;
   apiKey: string;
   baseUrl: string;
+  teacherUrl: string;
+  teacherEnabled: boolean;
 }
 
 export interface ChatMessage {
@@ -27,12 +29,6 @@ export interface StoredMessage {
   text: string;
   ts: string;
   model?: string;
-}
-
-export interface ProfileSnapshot {
-  exists: boolean;
-  markdown: string;
-  updatedAt: string | null;
 }
 
 export type GraphLayer = "L3" | "L2" | "L1";
@@ -65,8 +61,6 @@ export type WebviewMessage =
   | { type: "loadSessions" }
   | { type: "loadSession"; sessionId: string }
   | { type: "deleteSession"; sessionId: string }
-  | { type: "getProfile" }
-  | { type: "updateProfile" }
   | { type: "getMemoryGraph" };
 
 export type HostMessage =
@@ -77,5 +71,4 @@ export type HostMessage =
   | { type: "newChat" }
   | { type: "sessionsList"; sessions: ChatSessionSummary[] }
   | { type: "sessionLoaded"; sessionId: string; messages: StoredMessage[] }
-  | { type: "profile"; snapshot: ProfileSnapshot }
   | { type: "memoryGraphData"; graph: CitationGraph };

@@ -13,7 +13,8 @@
     "Machine Learning"
   ],
   "activationEvents": [
-    "onLanguage:python"
+    "onLanguage:python",
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -32,11 +33,6 @@
           "type": "webview",
           "id": "pylearner.chatView",
           "name": "Chat"
-        },
-        {
-          "type": "webview",
-          "id": "pylearner.profileView",
-          "name": "Profile"
         }
       ]
     },
@@ -114,6 +110,16 @@
           "default": 300000,
           "minimum": 0,
           "description": "Min interval (ms) between automatic background profile refreshes"
+        },
+        "pylearner.teacher.url": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "教师端服务器地址，学生 L1 trace 将上报到此地址"
+        },
+        "pylearner.teacher.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否开启教师端上报（将学生 L1 trace 事件发送到教师服务器）"
         }
       }
     }

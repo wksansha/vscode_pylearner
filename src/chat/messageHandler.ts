@@ -38,9 +38,8 @@ export async function handleMessage(
         const userText = payload.text as string;
         if (!userText?.trim()) return;
 
-        // Kick off a background profile refresh (fire-and-forget). Threshold +
-        // cooldown are enforced inside the refresher, so this is cheap.
-        void maybeRefresh();
+        // 自动刷新已关闭，此处不再触发画像更新
+        // void maybeRefresh();
 
         // Refresh router config; the API key comes from SecretStorage so it
         // never touches settings.json (Settings Sync would leak it).
@@ -166,6 +165,20 @@ export async function handleMessage(
           await cfg.update(
             "pylearner.llm.baseUrl",
             config.baseUrl,
+            vscode.ConfigurationTarget.Global
+          );
+        }
+        if (config.teacherUrl !== undefined) {
+          await cfg.update(
+            "pylearner.teacher.url",
+            config.teacherUrl,
+            vscode.ConfigurationTarget.Global
+          );
+        }
+        if (config.teacherEnabled !== undefined) {
+          await cfg.update(
+            "pylearner.teacher.enabled",
+            config.teacherEnabled,
             vscode.ConfigurationTarget.Global
           );
         }

@@ -11,7 +11,6 @@ export const CMD_IDS = {
 export const VIEW_IDS = {
   sidebarContainer: "pylearner-sidebar",
   chatView: "pylearner.chatView",
-  profileView: "pylearner.profileView",
 } as const;
 
 export const CONFIG_KEYS = {
@@ -52,14 +51,6 @@ export const MSG_TYPES = {
   monitorStatus: "monitorStatus",
   sessionsList: "sessionsList",
   sessionLoaded: "sessionLoaded",
-  // Profile panel (Webview → Host)
-  getProfile: "getProfile",
-  getProfileRaw: "getProfileRaw",
-  updateProfile: "updateProfile",
-  resetProfile: "resetProfile",
-  // Profile panel (Host → Webview)
-  profile: "profile",
-  profileRaw: "profileRaw",
   // Memory graph (Webview → Host)
   getMemoryGraph: "getMemoryGraph",
   // Memory graph (Host → Webview)

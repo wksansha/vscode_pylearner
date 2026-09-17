@@ -20,7 +20,7 @@ export function createTeacherReporter(deps: TeacherReporterDeps) {
 
   return {
     async report(event: TraceEvent): Promise<void> {
-      const payload = buildPayload(event);
+      const payload = buildPayload(event, deps);
       if (!payload) return;
 
       try {
@@ -44,11 +44,11 @@ export function createTeacherReporter(deps: TeacherReporterDeps) {
   };
 }
 
-function buildPayload(event: TraceEvent) {
+function buildPayload(event: TraceEvent, deps: TeacherReporterDeps) {
   const base = {
-    student_id: studentId,
-    student_name: studentName,
-    class_id: classId || "default",
+    student_id: deps.studentId,
+    student_name: deps.studentName,
+    class_id: deps.classId || "default",
     timestamp: event.ts,
     event_type: event.surface, // "diag" | "run"
   };

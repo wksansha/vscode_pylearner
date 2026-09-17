@@ -28,6 +28,8 @@ export function useChat() {
     model: "",
     apiKey: "",
     baseUrl: "",
+    teacherUrl: "http://localhost:3000",
+    teacherEnabled: true,
   });
   const [error, setError] = useState<string | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string>(() =>

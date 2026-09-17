@@ -15,11 +15,19 @@ export const SettingsPanel: React.FC<Props> = ({
   const [model, setModel] = useState(config.model);
   const [apiKey, setApiKey] = useState(config.apiKey);
   const [baseUrl, setBaseUrl] = useState(config.baseUrl);
+  const [teacherUrl, setTeacherUrl] = useState(config.teacherUrl);
+  const [teacherEnabled, setTeacherEnabled] = useState(config.teacherEnabled);
 
   const handleSave = useCallback(() => {
-    onSaveConfig({ model, apiKey, baseUrl });
+    onSaveConfig({
+      model,
+      apiKey,
+      baseUrl,
+      teacherUrl,
+      teacherEnabled,
+    });
     onClose();
-  }, [model, apiKey, baseUrl, onSaveConfig, onClose]);
+  }, [model, apiKey, baseUrl, teacherUrl, teacherEnabled, onSaveConfig, onClose]);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -62,6 +70,29 @@ export const SettingsPanel: React.FC<Props> = ({
           onChange={(e) => setBaseUrl(e.target.value)}
           className="w-full bg-gray-700 rounded px-2 py-1 mb-4 text-sm"
         />
+
+        <div className="border-t border-gray-700 pt-3 mt-2">
+          <h4 className="text-xs font-semibold mb-2">教师端上报</h4>
+
+          <label className="block text-xs text-gray-400 mb-1">教师服务器地址</label>
+          <input
+            type="text"
+            value={teacherUrl}
+            onChange={(e) => setTeacherUrl(e.target.value)}
+            placeholder="http://localhost:3000"
+            className="w-full bg-gray-700 rounded px-2 py-1 mb-3 text-sm"
+          />
+
+          <label className="flex items-center gap-2 text-xs text-gray-300 mb-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={teacherEnabled}
+              onChange={(e) => setTeacherEnabled(e.target.checked)}
+              className="accent-blue-500"
+            />
+            开启教师端上报（将学生 L1 trace 上报到教师服务器）
+          </label>
+        </div>
 
         <div className="flex gap-2 justify-end">
           <button

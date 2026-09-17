@@ -30,12 +30,11 @@ function setupStartupLogger() {
 setupStartupLogger();
 
 import * as vscode from "vscode";
-import { CMD_IDS, VIEW_IDS } from "./constants";
+import { CMD_IDS, CONFIG_KEYS, SECRET_KEYS, VIEW_IDS } from "./constants";
 import { L1Writer } from "./storage/l1Writer";
 import { ChatStore } from "./storage/chatStore";
 import { LlmRouter } from "./llm/router";
 import { ChatViewProvider } from "./chat/chatProvider";
-import { ProfileViewProvider } from "./chat/profileViewProvider";
 import { createEditListener } from "./events/editListener";
 import { createRunListener } from "./events/runListener";
 import { createDiagnosticsListener } from "./events/diagnosticsListener";
@@ -82,15 +81,22 @@ process.on("unhandledRejection", (reason) => {
 let chatProvider: ChatViewProvider;
 let outputChannel: vscode.OutputChannel;
 
+function log(message: string, ...args: unknown[]): void {
+  console.log(message, ...args);
+  if (outputChannel) {
+    outputChannel.appendLine(message);
+  }
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  console.log("Python Learner extension activated");
+  log("Python Learner extension activated");
 
   try {
     outputChannel = vscode.window.createOutputChannel("Python Learner");
     context.subscriptions.push(outputChannel);
-    console.log("[pylearner] output channel created");
+    log("[pylearner] output channel created");
   } catch (err) {
-    console.error("[pylearner] failed to create output channel:", err);
+    log("[pylearner] failed to create output channel:", err);
     void vscode.window.showErrorMessage(
       `Python Learner activation failed: ${
         err instanceof Error ? err.stack ?? err.message : String(err)
@@ -101,9 +107,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   try {
     await activateCore(context);
-    console.log("[pylearner] activation complete, listeners registered");
+    log("[pylearner] activation complete, listeners registered");
   } catch (err) {
-    console.error("[pylearner] activation failed:", err);
+    log("[pylearner] activation failed:", err);
     void vscode.window.showErrorMessage(
       `Python Learner activation failed: ${
         err instanceof Error ? err.stack ?? err.message : String(err)
@@ -116,28 +122,49 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   // Initialize core services - DEFER router creation until first use
   const l1Writer = new L1Writer(context.globalStorageUri);
   const chatStore = new ChatStore(context.globalStorageUri);
-  console.log("[pylearner] core services initialized");
+  log("[pylearner] core services initialized");
 
   // 初始化教师端上报器（如果启用）
-  const teacherEnabled = vscode.workspace
-    .getConfiguration("pylearner")
-    .get<boolean>(CONFIG_KEYS.teacherEnabled, false);
-  if (teacherEnabled) {
-    const teacherUrl =
-      vscode.workspace
-        .getConfiguration("pylearner")
-        .get<string>(CONFIG_KEYS.teacherUrl, "http://localhost:3000") ||
-      "http://localhost:3000";
-    const studentId =
-      context.secrets.get(SECRET_KEYS.studentId) || vscode.env.machineId;
-    const studentName = context.secrets.get(SECRET_KEYS.studentName) || "Unknown";
-    const classId = context.secrets.get(SECRET_KEYS.classId);
-
-    l1Writer.setTeacherReporter(
-      createTeacherReporter({ teacherUrl, studentId, studentName, classId })
-    );
-    console.log("[pylearner] teacher reporter enabled");
+  let currentReporter: ReturnType<typeof createTeacherReporter> | undefined;
+  async function applyTeacherReporter() {
+    const cfg = vscode.workspace.getConfiguration("pylearner");
+    const enabled = cfg.get<boolean>(CONFIG_KEYS.teacherEnabled, true);
+    if (enabled) {
+      const teacherUrl =
+        cfg.get<string>(CONFIG_KEYS.teacherUrl, "http://localhost:3000") ||
+        "http://localhost:3000";
+      const studentId =
+        (await context.secrets.get(SECRET_KEYS.studentId)) || vscode.env.machineId;
+      const studentName =
+        (await context.secrets.get(SECRET_KEYS.studentName)) || "Unknown";
+      const classId = await context.secrets.get(SECRET_KEYS.classId);
+      currentReporter = createTeacherReporter({
+        teacherUrl,
+        studentId,
+        studentName,
+        classId,
+      });
+      l1Writer.setTeacherReporter(currentReporter);
+      log("[pylearner] teacher reporter enabled");
+    } else {
+      currentReporter = undefined;
+      l1Writer.setTeacherReporter(undefined);
+      log("[pylearner] teacher reporter disabled");
+    }
   }
+  applyTeacherReporter();
+
+  // 监听教师端配置变化，动态开关上报
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (
+        e.affectsConfiguration("pylearner.teacher.enabled") ||
+        e.affectsConfiguration("pylearner.teacher.url")
+      ) {
+        applyTeacherReporter();
+      }
+    })
+  );
 
   // Factory function - creates a fresh router with current config on demand
   const routerFactory = () => new LlmRouter();
@@ -146,38 +173,38 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     context.secrets,
     routerFactory
   );
-  console.log("[pylearner] profile refresher created");
+  log("[pylearner] profile refresher created");
 
   // Register event listeners
   try {
     context.subscriptions.push(createEditListener(l1Writer));
-    console.log("[pylearner] edit listener registered");
+    log("[pylearner] edit listener registered");
   } catch (err) {
-    console.error("[pylearner] failed to register edit listener:", err);
+    log("[pylearner] failed to register edit listener:", err);
     throw err;
   }
 
   try {
     context.subscriptions.push(createRunListener(l1Writer));
-    console.log("[pylearner] run listener registered");
+    log("[pylearner] run listener registered");
   } catch (err) {
-    console.error("[pylearner] failed to register run listener:", err);
+    log("[pylearner] failed to register run listener:", err);
     throw err;
   }
 
   try {
     context.subscriptions.push(createDiagnosticsListener(l1Writer));
-    console.log("[pylearner] diagnostics listener registered");
+    log("[pylearner] diagnostics listener registered");
   } catch (err) {
-    console.error("[pylearner] failed to register diagnostics listener:", err);
+    log("[pylearner] failed to register diagnostics listener:", err);
     throw err;
   }
 
   try {
     context.subscriptions.push(createBehaviorListener(l1Writer));
-    console.log("[pylearner] behavior listener registered");
+    log("[pylearner] behavior listener registered");
   } catch (err) {
-    console.error("[pylearner] failed to register behavior listener:", err);
+    log("[pylearner] failed to register behavior listener:", err);
     throw err;
   }
 
@@ -191,25 +218,9 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         { webviewOptions: { retainContextWhenHidden: true } }
       )
     );
-    console.log("[pylearner] chat view provider registered");
+    log("[pylearner] chat view provider registered");
   } catch (err) {
-    console.error("[pylearner] failed to register chat view provider:", err);
-    throw err;
-  }
-
-  // Register Learner Profile webview view
-  try {
-    const profileProvider = new ProfileViewProvider(context, routerFactory, outputChannel);
-    context.subscriptions.push(
-      vscode.window.registerWebviewViewProvider(
-        VIEW_IDS.profileView,
-        profileProvider,
-        { webviewOptions: { retainContextWhenHidden: true } }
-      )
-    );
-    console.log("[pylearner] profile view provider registered");
-  } catch (err) {
-    console.error("[pylearner] failed to register profile view provider:", err);
+    log("[pylearner] failed to register chat view provider:", err);
     throw err;
   }
 
@@ -220,9 +231,9 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         vscode.commands.executeCommand(`${VIEW_IDS.sidebarContainer}.focus`);
       })
     );
-    console.log("[pylearner] openChat command registered");
+    log("[pylearner] openChat command registered");
   } catch (err) {
-    console.error("[pylearner] failed to register openChat command:", err);
+    log("[pylearner] failed to register openChat command:", err);
     throw err;
   }
 
@@ -232,9 +243,9 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         chatProvider.postMessage({ type: "newChat" });
       })
     );
-    console.log("[pylearner] newChat command registered");
+    log("[pylearner] newChat command registered");
   } catch (err) {
-    console.error("[pylearner] failed to register newChat command:", err);
+    log("[pylearner] failed to register newChat command:", err);
     throw err;
   }
 
@@ -252,9 +263,9 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         );
       })
     );
-    console.log("[pylearner] toggleMonitor command registered");
+    log("[pylearner] toggleMonitor command registered");
   } catch (err) {
-    console.error("[pylearner] failed to register toggleMonitor command:", err);
+    log("[pylearner] failed to register toggleMonitor command:", err);
     throw err;
   }
 
@@ -267,9 +278,9 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         );
       })
     );
-    console.log("[pylearner] openSettings command registered");
+    log("[pylearner] openSettings command registered");
   } catch (err) {
-    console.error("[pylearner] failed to register openSettings command:", err);
+    log("[pylearner] failed to register openSettings command:", err);
     throw err;
   }
 
@@ -278,39 +289,33 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   // extension host when the new window starts.
   try {
     context.subscriptions.push(registerUpdateProfileCommand(context, routerFactory, outputChannel));
-    console.log("[pylearner] update-profile command registered");
+    log("[pylearner] update-profile command registered");
   } catch (err) {
-    console.error("[pylearner] failed to register updateProfile command:", err);
+    log("[pylearner] failed to register updateProfile command:", err);
     throw err;
   }
 
   try {
     context.subscriptions.push(registerResetProfileCommand(context, routerFactory, outputChannel));
-    console.log("[pylearner] reset-profile command registered");
+    log("[pylearner] reset-profile command registered");
   } catch (err) {
-    console.error("[pylearner] failed to register resetProfile command:", err);
+    log("[pylearner] failed to register resetProfile command:", err);
     throw err;
   }
 
   try {
     context.subscriptions.push(registerMemoryGraphCommand(context));
-    console.log("[pylearner] memory-graph command registered");
+    log("[pylearner] memory-graph command registered");
   } catch (err) {
-    console.error("[pylearner] failed to register memoryGraph command:", err);
+    log("[pylearner] failed to register memoryGraph command:", err);
     throw err;
   }
 
-  // Lazy background refresh shortly after activation
-  try {
-    const refreshTimer = setTimeout(() => void refresher.maybeRefresh(), 5000);
-    context.subscriptions.push({ dispose: () => clearTimeout(refreshTimer) });
-    console.log("[pylearner] refresh timer set");
-  } catch (err) {
-    console.error("[pylearner] failed to set refresh timer:", err);
-    throw err;
-  }
+  // 自动刷新画像功能已停用，待后续评估后再开启
+  // 这里保留 refresher 的创建，但不再触发定时刷新
+  log("[pylearner] auto profile refresh disabled");
 }
 
 export function deactivate() {
-  console.log("Python Learner extension deactivated");
+  log("Python Learner extension deactivated");
 }

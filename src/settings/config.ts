@@ -8,6 +8,8 @@ export interface LlmConfig {
   // Optional here: the real value is resolved from SecretStorage at request
   // time (see messageHandler) and injected into the backend by LlmRouter.
   apiKey?: string;
+  teacherUrl: string;
+  teacherEnabled: boolean;
 }
 
 export interface MonitorConfig {
@@ -26,6 +28,8 @@ function readLlmConfig(): LlmConfig {
     provider: cfg.get<string>(CONFIG_KEYS.llmProvider, "vscode-lm"),
     model: cfg.get<string>(CONFIG_KEYS.llmModel, ""),
     baseUrl: cfg.get<string>(CONFIG_KEYS.llmBaseUrl, "http://localhost:11434"),
+    teacherUrl: cfg.get<string>(CONFIG_KEYS.teacherUrl, "http://127.0.0.1:3000"),
+    teacherEnabled: cfg.get<boolean>(CONFIG_KEYS.teacherEnabled, true),
   };
 }
 

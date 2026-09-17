@@ -49,7 +49,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.chatStore,
         this.abortRef,
         this.context.globalStorageUri,
-        () => this.refresher.maybeRefresh()
+        // 自动刷新已关闭，传 no-op 占位
+        async () => {}
       );
     });
   }

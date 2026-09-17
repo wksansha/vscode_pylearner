@@ -6,15 +6,12 @@ export default defineConfig({
   build: {
     outDir: "dist",
     rollupOptions: {
-      // Three entry points: the chat SPA (index.html), the learner-profile
-      // panel (profile.html), and the memory-graph panel (memoryGraph.html).
-      // Relative paths resolve against the webview-ui cwd. `[name]` is the
-      // input key, so the chat bundle stays `assets/index.js`, the profile
-      // bundle becomes `assets/profile.js`, and the graph bundle becomes
-      // `assets/memoryGraph.js`.
+      // Two entry points: the chat SPA (index.html), and the memory-graph panel
+      // (memoryGraph.html). Relative paths resolve against the webview-ui cwd.
+      // `[name]` is the input key, so the chat bundle stays `assets/index.js`,
+      // and the graph bundle becomes `assets/memoryGraph.js`.
       input: {
         index: "index.html",
-        profile: "profile.html",
         memoryGraph: "memoryGraph.html",
       },
       output: {
