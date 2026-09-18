@@ -77,7 +77,26 @@ function buildPayload(event: TraceEvent, deps: TeacherReporterDeps) {
     };
   }
 
-  // run 事件（只上报错误）
+  // run 事件（报错）
+  // run 成功也上报：服务端记为活动信号，区分「没在用」和「用得顺」（spec §11 差距 #2）
+  if (event.surface === "run" && event.kind === "execution_success") {
+    const p = event.payload as {
+      command?: string;
+      exit_code?: number;
+      file?: string;
+      source?: string;
+    };
+    return {
+      ...base,
+      raw_message: "run success",
+      error_type: "RunSuccess",
+      error_message: "",
+      command: p.command,
+      exit_code: 0,
+      file_path: p.file,
+      source: p.source,
+    };
+  }
   if (event.surface === "run" && event.kind === "execution_error") {
     const p = event.payload as {
       error_type?: string;
