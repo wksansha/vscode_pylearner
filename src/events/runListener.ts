@@ -10,12 +10,31 @@ type PythonErrorInfo = {
   error_message?: string;
   file?: string;
   line?: number;
+  code_snippet?: string;
 };
 
 // Terminal output often carries ANSI escape sequences (PowerShell prompt,
 // shell integration markers); strip them before pattern matching.
 const stripAnsi = (s: string): string =>
   s.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");
+
+// Extract a code snippet around the given line number from a Python file.
+// Returns undefined if the file cannot be read.
+async function extractCodeSnippet(filePath: string, line: number, contextLines = 3): Promise<string | undefined> {
+  try {
+    const uri = vscode.Uri.file(filePath);
+    const content = await vscode.workspace.fs.readFile(uri);
+    const text = new TextDecoder().decode(content);
+    const lines = text.split(/\r?\n/);
+    const start = Math.max(0, line - 1 - contextLines);
+    const end = Math.min(lines.length, line + contextLines);
+    const snippetLines = lines.slice(start, end);
+    return snippetLines.join("\n");
+  } catch {
+    // File not found or read error — silently skip snippet extraction
+    return undefined;
+  }
+}
 
 function parsePythonError(output: string): PythonErrorInfo {
   const lines = stripAnsi(output).split(/\r?\n/);
@@ -238,6 +257,16 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
               : tag.output;
           if (tail.trim()) {
             errorFields = parsePythonError(tail);
+            // Extract code snippet from the Python file if we have file and line info
+            if (errorFields.file && errorFields.line !== undefined) {
+              const codeSnippet = await extractCodeSnippet(
+                String(errorFields.file),
+                Number(errorFields.line)
+              );
+              if (codeSnippet) {
+                errorFields.code_snippet = codeSnippet;
+              }
+            }
             if (!errorFields.error_type) {
               // Diagnostic (privacy-safe, no content): output was captured
               // but no exception signature matched it.
