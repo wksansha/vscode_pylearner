@@ -43,6 +43,13 @@ import { registerUpdateProfileCommand, registerResetProfileCommand } from "./com
 import { ProfileRefresher } from "./commands/autoRefresh";
 import { registerMemoryGraphCommand } from "./commands/memoryGraph";
 import { createTeacherReporter } from "./teacher/reporter";
+import {
+  loadStudentIdentity,
+  saveStudentIdentity,
+  migrateLegacyIdentity,
+  type StudentIdentityInput,
+} from "./identity/studentIdentity";
+import { maybePromptFirstRun, promptForIdentity } from "./identity/studentIdentityUi";
 
 // Global error handlers to prevent uncaught exceptions from crashing the extension host
 process.on("uncaughtException", (err) => {
@@ -133,17 +140,15 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       const teacherUrl =
         cfg.get<string>(CONFIG_KEYS.teacherUrl, "http://localhost:3000") ||
         "http://localhost:3000";
-      const studentId =
-        (await context.secrets.get(SECRET_KEYS.studentId)) || vscode.env.machineId;
-      const studentName =
-        (await context.secrets.get(SECRET_KEYS.studentName)) || "Unknown";
-      const classId = await context.secrets.get(SECRET_KEYS.classId);
-      currentReporter = createTeacherReporter({
-        teacherUrl,
-        studentId,
-        studentName,
-        classId,
-      });
+      // 身份在每次上报时读取（学号/姓名修改后下一次上报立即生效）
+      const getIdentity = () => {
+        const id = loadStudentIdentity(context.globalState);
+        return {
+          studentId: id.studentId || vscode.env.machineId,
+          studentName: id.studentName || "Unknown",
+        };
+      };
+      currentReporter = createTeacherReporter({ teacherUrl, getIdentity });
       l1Writer.setTeacherReporter(currentReporter);
       log("[pylearner] teacher reporter enabled");
     } else {
@@ -165,6 +170,38 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       }
     })
   );
+
+  // ── 学生身份：状态栏 + 修改命令 + 首启弹窗 ──────────────
+  const statusBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100
+  );
+  statusBar.name = "课堂身份";
+  statusBar.command = CMD_IDS.setStudentIdentity;
+  const updateStatusBar = () => {
+    const id = loadStudentIdentity(context.globalState);
+    statusBar.text = id.studentId
+      ? `$(account) ${id.studentId} ${id.studentName ?? ""}`.trim()
+      : "$(account) 设置学号";
+    statusBar.tooltip = "课堂助手身份：点击设置学号/姓名";
+    statusBar.show();
+  };
+  updateStatusBar();
+  context.subscriptions.push(statusBar);
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(CMD_IDS.setStudentIdentity, async () => {
+      const current = loadStudentIdentity(context.globalState);
+      const identity: StudentIdentityInput | undefined = await promptForIdentity(current);
+      if (!identity) return; // 用户取消
+      await saveStudentIdentity(context.globalState, identity);
+      updateStatusBar();
+      vscode.window.showInformationMessage(
+        `身份已更新：${identity.studentId} ${identity.studentName}，下一次上报即生效`
+      );
+    })
+  );
+  log("[pylearner] setStudentIdentity command registered");
 
   // Factory function - creates a fresh router with current config on demand
   const routerFactory = () => new LlmRouter();
@@ -314,6 +351,19 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   // 自动刷新画像功能已停用，待后续评估后再开启
   // 这里保留 refresher 的创建，但不再触发定时刷新
   log("[pylearner] auto profile refresh disabled");
+
+  // 首启迁移旧 SecretStorage 身份 + 首次使用弹窗输入学号/姓名（异步，不阻塞激活）
+  void (async () => {
+    try {
+      await migrateLegacyIdentity(context.globalState, context.secrets, {
+        studentId: SECRET_KEYS.studentId,
+        studentName: SECRET_KEYS.studentName,
+      });
+      await maybePromptFirstRun(context.globalState, updateStatusBar);
+    } catch (err) {
+      log("[pylearner] identity prompt failed:", err);
+    }
+  })();
 }
 
 export function deactivate() {

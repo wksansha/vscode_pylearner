@@ -2,6 +2,7 @@ import { getConfig } from "../settings/config";
 import { VscodeLmBackend } from "./vscodeLm";
 import { OllamaBackend } from "./ollama";
 import { OpenAIBackend } from "./openai";
+import { TeacherBackend } from "./teacher";
 
 export interface LlmMessage {
   role: "user" | "assistant" | "system";
@@ -37,6 +38,11 @@ export class LlmRouter {
         return new OllamaBackend(this.config);
       case "openai":
         return new OpenAIBackend({ ...this.config, apiKey });
+      case "teacher":
+        // 走课堂服务器代理：无需 apiKey/model，model 由服务器统一管理
+        return new TeacherBackend({
+          teacherUrl: this.config.teacherUrl,
+        });
       case "vscode-lm":
       default:
         return new VscodeLmBackend();

@@ -25,7 +25,8 @@ export interface PylearnerConfig {
 function readLlmConfig(): LlmConfig {
   const cfg = vscode.workspace.getConfiguration();
   return {
-    provider: cfg.get<string>(CONFIG_KEYS.llmProvider, "vscode-lm"),
+    // 机房默认走教师端代理（服务器统一管模型）；个人开发者可在设置里改回 vscode-lm
+    provider: cfg.get<string>(CONFIG_KEYS.llmProvider, "teacher"),
     model: cfg.get<string>(CONFIG_KEYS.llmModel, ""),
     baseUrl: cfg.get<string>(CONFIG_KEYS.llmBaseUrl, "http://localhost:11434"),
     teacherUrl: cfg.get<string>(CONFIG_KEYS.teacherUrl, "http://127.0.0.1:3000"),

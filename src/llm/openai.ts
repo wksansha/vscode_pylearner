@@ -1,5 +1,6 @@
 import type { LlmBackend, LlmMessage } from "./router";
 import type { LlmConfig } from "../settings/config";
+import { consumeSseStream } from "./sse";
 
 export class OpenAIBackend implements LlmBackend {
   name = "openai";
@@ -56,33 +57,6 @@ export class OpenAIBackend implements LlmBackend {
       throw new Error(`OpenAI API error (${resp.status}): ${body.slice(0, 500)}`);
     }
 
-    const reader = resp.body?.getReader();
-    if (!reader) throw new Error("No response body from OpenAI API");
-
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data: ")) continue;
-        const data = trimmed.slice(6);
-        if (data === "[DONE]") return;
-        try {
-          const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta?.content;
-          if (delta) onChunk(delta);
-        } catch {
-          // skip malformed SSE lines
-        }
-      }
-    }
+    await consumeSseStream(resp, onChunk);
   }
 }

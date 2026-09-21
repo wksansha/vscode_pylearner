@@ -6,6 +6,7 @@ export const CMD_IDS = {
   updateProfile: "pylearner.updateProfile",
   resetProfile: "pylearner.resetProfile",
   memoryGraph: "pylearner.memoryGraph",
+  setStudentIdentity: "pylearner.setStudentIdentity",
 } as const;
 
 export const VIEW_IDS = {
@@ -32,6 +33,13 @@ export const SECRET_KEYS = {
   studentId: "pylearner.student.id",
   studentName: "pylearner.student.name",
   classId: "pylearner.student.classId",
+} as const;
+
+// 学号/姓名是身份不是机密，存 globalState（同步读、不依赖系统钥匙环）。
+// 旧版本的 SECRET_KEYS.student* 若有值，激活时迁移到这里。
+export const STATE_KEYS = {
+  studentId: "pylearner.identity.studentId",
+  studentName: "pylearner.identity.studentName",
 } as const;
 
 export const MSG_TYPES = {

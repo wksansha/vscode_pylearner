@@ -10,17 +10,17 @@ import * as vscode from "vscode";
 
 export interface TeacherReporterDeps {
   teacherUrl: string;
-  studentId: string;
-  studentName: string;
-  classId?: string;
+  /** 每次上报时调用（而非激活时固化），学号/姓名修改后下一次上报立即生效 */
+  getIdentity: () => { studentId: string; studentName: string; classId?: string };
 }
 
 export function createTeacherReporter(deps: TeacherReporterDeps) {
-  const { teacherUrl, studentId, studentName, classId } = deps;
+  const { teacherUrl } = deps;
 
   return {
     async report(event: TraceEvent): Promise<void> {
-      const payload = buildPayload(event, deps);
+      const identity = deps.getIdentity();
+      const payload = buildPayload(event, identity);
       if (!payload) return;
 
       try {
@@ -44,11 +44,14 @@ export function createTeacherReporter(deps: TeacherReporterDeps) {
   };
 }
 
-function buildPayload(event: TraceEvent, deps: TeacherReporterDeps) {
+function buildPayload(
+  event: TraceEvent,
+  identity: { studentId: string; studentName: string; classId?: string }
+) {
   const base = {
-    student_id: deps.studentId,
-    student_name: deps.studentName,
-    class_id: deps.classId || "default",
+    student_id: identity.studentId,
+    student_name: identity.studentName,
+    class_id: identity.classId || "default",
     timestamp: event.ts,
     event_type: event.surface, // "diag" | "run"
   };

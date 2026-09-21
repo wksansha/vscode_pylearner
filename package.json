@@ -38,6 +38,10 @@
     },
     "commands": [
       {
+        "command": "pylearner.setStudentIdentity",
+        "title": "Python Learner: 设置学号/姓名"
+      },
+      {
         "command": "pylearner.openChat",
         "title": "Python Learner: Open Chat"
       },
@@ -71,13 +75,14 @@
       "properties": {
         "pylearner.llm.provider": {
           "type": "string",
-          "default": "vscode-lm",
+          "default": "teacher",
           "enum": [
+            "teacher",
             "vscode-lm",
             "ollama",
             "openai"
           ],
-          "description": "LLM provider for chat"
+          "description": "LLM provider for chat（teacher = 经课堂服务器代理，学生无需配置模型）"
         },
         "pylearner.llm.model": {
           "type": "string",
