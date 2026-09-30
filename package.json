@@ -123,7 +123,7 @@
         },
         "pylearner.teacher.enabled": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "是否开启教师端上报（将学生 L1 trace 事件发送到教师服务器）"
         }
       }
