@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { L1Writer } from "../storage/l1Writer";
 import { CONFIG_KEYS, EVENT_KINDS } from "../constants";
+import { resolvePyFile } from "../submission/exerciseHeader";
 
 // ── Python error parsing ──────────────────────────────────────────────
 
@@ -84,6 +85,8 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
       reading: Promise<void>;
       ended: boolean;
       chunks: number;
+      cwd?: string;
+      file?: string;
     }
   >();
 
@@ -174,12 +177,17 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
       // read() is a LIVE stream — chunks must be consumed while the command
       // runs. Start consuming now and keep a bounded tail buffer; the end
       // handler waits for `reading` and parses `output`.
+      const commandLine = e.execution.commandLine.value;
+      const cwdFsPath = e.execution.cwd?.fsPath;          // A27：仅在执行发生时可得，事后无法补
+      const resolvedFile = resolvePyFile(commandLine, cwdFsPath);
       const state = {
         task: mostRecentTask(),
         output: "",
         reading: Promise.resolve(),
         ended: false,
         chunks: 0,
+        cwd: cwdFsPath,                                   // → payload.cwd
+        file: resolvedFile ?? undefined,                  // → payload.file（绝对路径或 undefined）
       };
       state.reading = (async () => {
         try {
@@ -284,6 +292,10 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
             source: "terminal",
             command: e.execution.commandLine.value.slice(0, 500),
             exit_code: exitCode,
+            cwd: tag.cwd,
+            // tag.file 必须先于 ...errorFields 展开：error 路径 traceback
+            // 解析出的 errorFields.file 优先覆盖，无 traceback 值才用 tag.file。
+            ...(tag.file ? { file: tag.file } : {}),
             ...errorFields,
           }
         );

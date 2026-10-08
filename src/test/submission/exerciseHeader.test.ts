@@ -38,4 +38,12 @@ describe("extractPyPathFromCommand / resolvePyFile（A27，真实 L1 command 样
     expect(resolvePyFile("& C:\\P\\python.exe c:/x/study.py", undefined)).toBe("c:\\x\\study.py");
     expect(resolvePyFile("python exercise-01.py", undefined)).toBeNull();
   });
+  it("resolvePyFile 覆盖 A27 两种真实来源：绝对路径命令 + 相对路径命令带 cwd", () => {
+    // 真实 L1 数据（2026-09-23）：& C:\Python314\python.exe c:/Users/kaiwa/Desktop/study.py
+    expect(resolvePyFile("& C:\\Python314\\python.exe c:/Users/kaiwa/Desktop/study.py", undefined))
+      .toBe("c:\\Users\\kaiwa\\Desktop\\study.py");
+    // 学生手敲：python week-01/exercise-01.py（cwd = 工作区根）
+    expect(resolvePyFile("python week-01/exercise-01.py", "c:\\classroom"))
+      .toBe("c:\\classroom\\week-01\\exercise-01.py");
+  });
 });
