@@ -43,13 +43,14 @@ import { registerUpdateProfileCommand, registerResetProfileCommand } from "./com
 import { ProfileRefresher } from "./commands/autoRefresh";
 import { registerMemoryGraphCommand } from "./commands/memoryGraph";
 import { createTeacherReporter } from "./teacher/reporter";
+import { loadStudentIdentity, migrateLegacyIdentity } from "./identity/studentIdentity";
+import { openIdentityPage, maybeOpenIdentityPage } from "./identity/identityPage";
 import {
-  loadStudentIdentity,
-  saveStudentIdentity,
-  migrateLegacyIdentity,
-  type StudentIdentityInput,
-} from "./identity/studentIdentity";
-import { maybePromptFirstRun, promptForIdentity } from "./identity/studentIdentityUi";
+  makeHandleRunSuccess,
+  type SubmissionDeps,
+} from "./submission/submissionReporter";
+import { makeSubmitCommand } from "./submission/submitCommand";
+import { makeRunPull } from "./pull/pullCommand";
 
 // Global error handlers to prevent uncaught exceptions from crashing the extension host
 process.on("uncaughtException", (err) => {
@@ -131,6 +132,13 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   const chatStore = new ChatStore(context.globalStorageUri);
   log("[pylearner] core services initialized");
 
+  // 共享身份读取（A8）：无 machineId/"Unknown" 回退，未设身份时为 null，由消费方（reporter/提交链）门控
+  // 身份在每次调用时读取（学号/姓名修改后下一次上报/提交立即生效）
+  const getIdentity = () => {
+    const id = loadStudentIdentity(context.globalState);
+    return { studentId: id.studentId, studentName: id.studentName }; // 可能为 null
+  };
+
   // 初始化教师端上报器（如果启用）
   let currentReporter: ReturnType<typeof createTeacherReporter> | undefined;
   async function applyTeacherReporter() {
@@ -140,14 +148,6 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       const teacherUrl =
         cfg.get<string>(CONFIG_KEYS.teacherUrl, "http://localhost:3000") ||
         "http://localhost:3000";
-      // 身份在每次上报时读取（学号/姓名修改后下一次上报立即生效）
-      const getIdentity = () => {
-        const id = loadStudentIdentity(context.globalState);
-        return {
-          studentId: id.studentId || vscode.env.machineId,
-          studentName: id.studentName || "Unknown",
-        };
-      };
       currentReporter = createTeacherReporter({ teacherUrl, getIdentity });
       l1Writer.setTeacherReporter(currentReporter);
       log("[pylearner] teacher reporter enabled");
@@ -189,19 +189,76 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   updateStatusBar();
   context.subscriptions.push(statusBar);
 
+  // —— 作业系统装配（A1/A3/A8/A25/A26/A27）——
+  const identityDeps = {
+    teacherUrl: () =>
+      vscode.workspace
+        .getConfiguration("pylearner")
+        .get<string>(CONFIG_KEYS.teacherUrl, "http://localhost:3000"),
+    onSaved: () => updateStatusBar(),
+  };
+  // 身份命令（A25：InputBox 弹窗删除，统一走身份页；状态栏点击即打开该页）
   context.subscriptions.push(
-    vscode.commands.registerCommand(CMD_IDS.setStudentIdentity, async () => {
-      const current = loadStudentIdentity(context.globalState);
-      const identity: StudentIdentityInput | undefined = await promptForIdentity(current);
-      if (!identity) return; // 用户取消
-      await saveStudentIdentity(context.globalState, identity);
-      updateStatusBar();
-      vscode.window.showInformationMessage(
-        `身份已更新：${identity.studentId} ${identity.studentName}，下一次上报即生效`
-      );
-    })
+    vscode.commands.registerCommand(CMD_IDS.setStudentIdentity, () =>
+      openIdentityPage(identityDeps, context)
+    )
   );
   log("[pylearner] setStudentIdentity command registered");
+
+  const readFile = async (fsPath: string): Promise<string | null> => {
+    try {
+      return new TextDecoder().decode(
+        await vscode.workspace.fs.readFile(vscode.Uri.file(fsPath))
+      );
+    } catch {
+      return null;
+    }
+  };
+  const saveIfDirty = async (filePath: string) => {
+    const doc = vscode.workspace.textDocuments.find(
+      (d) => d.uri.fsPath === filePath
+    );
+    if (doc?.isDirty) await doc.save();
+  };
+  const submissionDeps: SubmissionDeps = {
+    teacherUrl: identityDeps.teacherUrl,
+    getIdentity,
+    onIdentityMissing: () =>
+      maybeOpenIdentityPage(identityDeps, context, loadStudentIdentity(context.globalState)),
+    globalState: context.globalState,
+    saveIfDirty,
+  };
+  const handleRunSuccess = makeHandleRunSuccess(submissionDeps, vscode, readFile);
+  l1Writer.setSubmissionHandler((ev) => {
+    const cfg = vscode.workspace.getConfiguration("pylearner");
+    if (!cfg.get<boolean>(CONFIG_KEYS.submissionEnabled, true)) return;
+    if (!cfg.get<boolean>(CONFIG_KEYS.submissionAutoSubmit, true)) return;
+    void handleRunSuccess(ev);   // 内部整体 try/catch，不会产生未处理拒绝
+  });
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      CMD_IDS.submitExercise,
+      makeSubmitCommand(submissionDeps, readFile)
+    )
+  );
+
+  // 拉取：命令 + 激活时自动（A26）
+  const pullDeps = {
+    teacherUrl: identityDeps.teacherUrl,
+    globalState: context.globalState,
+    // PullDeps 类型要求这两个成员；makeRunPull 内部一律用 vscode.workspace.fs 实现覆盖它们
+    fileExists: async () => false,
+    writeFile: async () => {},
+  };
+  const runPull = makeRunPull(
+    pullDeps,
+    vscode,
+    (m, warn) =>
+      warn ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand(CMD_IDS.pullAssignments, () => void runPull())
+  );
 
   // Factory function - creates a fresh router with current config on demand
   const routerFactory = () => new LlmRouter();
@@ -352,16 +409,34 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   // 这里保留 refresher 的创建，但不再触发定时刷新
   log("[pylearner] auto profile refresh disabled");
 
-  // 首启迁移旧 SecretStorage 身份 + 首次使用弹窗输入学号/姓名（异步，不阻塞激活）
+  // 首启迁移旧 SecretStorage 身份；无身份 → 打开身份页；有身份 → 静默复核一次（A25）+ 激活自动拉取（A26，异步不阻塞激活）
   void (async () => {
     try {
       await migrateLegacyIdentity(context.globalState, context.secrets, {
         studentId: SECRET_KEYS.studentId,
         studentName: SECRET_KEYS.studentName,
       });
-      await maybePromptFirstRun(context.globalState, updateStatusBar);
+      const id = loadStudentIdentity(context.globalState);
+      if (!id.studentId) {
+        openIdentityPage(identityDeps, context);
+      } else {
+        try {
+          const res = await fetch(`${identityDeps.teacherUrl()}/api/identity/validate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ studentId: id.studentId, studentName: id.studentName }),
+          });
+          if (!res.ok) {
+            statusBar.tooltip = "身份校验失败（名册可能已更新），点击重新设置";
+            openIdentityPage(identityDeps, context);
+          }
+        } catch {
+          /* 服务器不可达：静默，下次再复核 */
+        }
+      }
+      void runPull(); // 激活自动拉取（A26，后台）
     } catch (err) {
-      log("[pylearner] identity prompt failed:", err);
+      log("[pylearner] identity first-run check failed:", err);
     }
   })();
 }
