@@ -12,6 +12,7 @@ export class L1Writer {
   private baseUri: vscode.Uri;
   private locks: Map<string, Promise<void>> = new Map();
   private reporter?: TeacherReporter;
+  private submissionHandler?: (event: TraceEvent) => void;
 
   constructor(storageUri: vscode.Uri) {
     this.baseUri = vscode.Uri.joinPath(storageUri, "trace");
@@ -19,6 +20,10 @@ export class L1Writer {
 
   setTeacherReporter(reporter: TeacherReporter | undefined) {
     this.reporter = reporter;
+  }
+
+  setSubmissionHandler(handler?: (event: TraceEvent) => void) {
+    this.submissionHandler = handler;
   }
 
   async append(
@@ -37,6 +42,15 @@ export class L1Writer {
       this.reporter.report(event).catch((err: unknown) => {
         console.warn("[L1Writer] 教师端上报失败:", err instanceof Error ? err.message : String(err));
       });
+    }
+
+    // 分发给提交通道（仅 run success；失败不影响 L1 持久化）
+    if (this.submissionHandler && surface === "run" && kind === "execution_success") {
+      try {
+        this.submissionHandler(event);
+      } catch (err: unknown) {
+        console.warn("[L1Writer] 提交通道分发失败:", err instanceof Error ? err.message : String(err));
+      }
     }
   }
 

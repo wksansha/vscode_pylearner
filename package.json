@@ -42,6 +42,16 @@
         "title": "Python Learner: 设置学号/姓名"
       },
       {
+        "command": "pylearner.submitExercise",
+        "title": "提交作业（当前文件）",
+        "category": "Python Learner"
+      },
+      {
+        "command": "pylearner.pullAssignments",
+        "title": "拉取作业",
+        "category": "Python Learner"
+      },
+      {
         "command": "pylearner.openChat",
         "title": "Python Learner: Open Chat"
       },
@@ -125,6 +135,16 @@
           "type": "boolean",
           "default": false,
           "description": "是否开启教师端上报（将学生 L1 trace 事件发送到教师服务器）"
+        },
+        "pylearner.submission.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用作业提交通道"
+        },
+        "pylearner.submission.autoSubmit": {
+          "type": "boolean",
+          "default": true,
+          "description": "运行成功后自动提交（关闭后仅手动提交）"
         }
       }
     }

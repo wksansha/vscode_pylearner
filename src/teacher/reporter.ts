@@ -11,7 +11,7 @@ import * as vscode from "vscode";
 export interface TeacherReporterDeps {
   teacherUrl: string;
   /** 每次上报时调用（而非激活时固化），学号/姓名修改后下一次上报立即生效 */
-  getIdentity: () => { studentId: string; studentName: string; classId?: string };
+  getIdentity: () => { studentId: string | null; studentName: string | null; classId?: string };
 }
 
 export function createTeacherReporter(deps: TeacherReporterDeps) {
@@ -20,6 +20,11 @@ export function createTeacherReporter(deps: TeacherReporterDeps) {
   return {
     async report(event: TraceEvent): Promise<void> {
       const identity = deps.getIdentity();
+      // 身份门控（A8）：未设身份不上报，本地 L1 照记
+      if (!identity.studentId || !identity.studentName) {
+        console.log("[TeacherReporter] 身份未设置，跳过上报（本地 L1 照记）");
+        return;
+      }
       const payload = buildPayload(event, identity);
       if (!payload) return;
 
@@ -46,7 +51,7 @@ export function createTeacherReporter(deps: TeacherReporterDeps) {
 
 function buildPayload(
   event: TraceEvent,
-  identity: { studentId: string; studentName: string; classId?: string }
+  identity: { studentId: string | null; studentName: string | null; classId?: string }
 ) {
   const base = {
     student_id: identity.studentId,

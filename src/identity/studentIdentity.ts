@@ -6,7 +6,7 @@
  * - SecretStorage 在 Linux 依赖系统钥匙环（libsecret），精简机房环境可能不可用
  * - Memento.get 是同步内存读，上报时直接读取，改完立即生效，无需额外缓存
  *
- * UI（InputBox 弹窗）见 studentIdentityUi.ts。
+ * UI（身份设置 webview 页）见 identityPage.ts。
  */
 import { STATE_KEYS } from "../constants";
 

@@ -7,6 +7,8 @@ export const CMD_IDS = {
   resetProfile: "pylearner.resetProfile",
   memoryGraph: "pylearner.memoryGraph",
   setStudentIdentity: "pylearner.setStudentIdentity",
+  submitExercise: "pylearner.submitExercise",
+  pullAssignments: "pylearner.pullAssignments",
 } as const;
 
 export const VIEW_IDS = {
@@ -24,6 +26,8 @@ export const CONFIG_KEYS = {
   autoRefreshCooldownMs: "pylearner.memory.autoRefreshCooldownMs",
   teacherUrl: "pylearner.teacher.url",
   teacherEnabled: "pylearner.teacher.enabled",
+  submissionEnabled: "pylearner.submission.enabled",
+  submissionAutoSubmit: "pylearner.submission.autoSubmit",
 } as const;
 
 // API key lives in SecretStorage (never in settings.json — Settings Sync
