@@ -204,13 +204,6 @@ export function useChat() {
     }
   }, []);
 
-  const saveConfig = useCallback(
-    (partial: Partial<LlmConfig>) => {
-      vscode.postMessage({ type: "saveConfig", config: partial });
-    },
-    []
-  );
-
   return {
     messages,
     sessions,
@@ -225,6 +218,5 @@ export function useChat() {
     loadSession,
     deleteSession,
     refreshSessions,
-    saveConfig,
   };
 }

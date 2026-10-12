@@ -141,56 +141,6 @@ export async function handleMessage(
         break;
       }
 
-      case MSG_TYPES.saveConfig: {
-        const config = payload.config as Record<string, string>;
-        const cfg = vscode.workspace.getConfiguration();
-        if (config.provider) {
-          await cfg.update(
-            "pylearner.llm.provider",
-            config.provider,
-            vscode.ConfigurationTarget.Global
-          );
-        }
-        if (config.model !== undefined) {
-          await cfg.update(
-            "pylearner.llm.model",
-            config.model,
-            vscode.ConfigurationTarget.Global
-          );
-        }
-        if (config.apiKey !== undefined) {
-          await secrets.store(SECRET_KEYS.llmApiKey, config.apiKey);
-        }
-        if (config.baseUrl) {
-          await cfg.update(
-            "pylearner.llm.baseUrl",
-            config.baseUrl,
-            vscode.ConfigurationTarget.Global
-          );
-        }
-        if (config.teacherUrl !== undefined) {
-          await cfg.update(
-            "pylearner.teacher.url",
-            config.teacherUrl,
-            vscode.ConfigurationTarget.Global
-          );
-        }
-        if (config.teacherEnabled !== undefined) {
-          await cfg.update(
-            "pylearner.teacher.enabled",
-            config.teacherEnabled,
-            vscode.ConfigurationTarget.Global
-          );
-        }
-        router.refreshConfig();
-        const savedKey = (await secrets.get(SECRET_KEYS.llmApiKey)) ?? "";
-        webview.postMessage({
-          type: MSG_TYPES.config,
-          config: { ...getConfig().llm, apiKey: savedKey },
-        });
-        break;
-      }
-
       case MSG_TYPES.loadSessions: {
         const sessions = await chatStore.listSessions();
         webview.postMessage({

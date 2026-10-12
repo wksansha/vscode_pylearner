@@ -143,7 +143,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   let currentReporter: ReturnType<typeof createTeacherReporter> | undefined;
   async function applyTeacherReporter() {
     const cfg = vscode.workspace.getConfiguration("pylearner");
-    const enabled = cfg.get<boolean>(CONFIG_KEYS.teacherEnabled, false);
+    const enabled = cfg.get<boolean>(CONFIG_KEYS.teacherEnabled, true);
     if (enabled) {
       const teacherUrl =
         cfg.get<string>(CONFIG_KEYS.teacherUrl, "http://localhost:3000") ||

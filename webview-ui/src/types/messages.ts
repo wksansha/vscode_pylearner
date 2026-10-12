@@ -56,7 +56,6 @@ export interface CitationGraph {
 export type WebviewMessage =
   | { type: "chat"; text: string; sessionId: string }
   | { type: "getConfig" }
-  | { type: "saveConfig"; config: Partial<LlmConfig> }
   | { type: "abort" }
   | { type: "loadSessions" }
   | { type: "loadSession"; sessionId: string }

@@ -2,8 +2,6 @@ import React, { useState } from "react";
 import { useChat } from "./hooks/useChat";
 import { ChatMessages } from "./components/ChatMessages";
 import { ChatInput } from "./components/ChatInput";
-import { ModelSelector } from "./components/ModelSelector";
-import { SettingsPanel } from "./components/SettingsPanel";
 import { SessionList } from "./components/SessionList";
 
 const App: React.FC = () => {
@@ -11,7 +9,6 @@ const App: React.FC = () => {
     messages,
     sessions,
     currentSessionId,
-    config,
     error,
     isStreaming,
     streamingText,
@@ -21,10 +18,8 @@ const App: React.FC = () => {
     loadSession,
     deleteSession,
     refreshSessions,
-    saveConfig,
   } = useChat();
 
-  const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
   return (
@@ -33,7 +28,6 @@ const App: React.FC = () => {
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-600">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold">🐍 Python Learner</span>
-          <ModelSelector config={config} onSaveConfig={saveConfig} />
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -52,13 +46,6 @@ const App: React.FC = () => {
             title="New Chat"
           >
             + New
-          </button>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded"
-            title="Settings"
-          >
-            ⚙
           </button>
         </div>
       </div>
@@ -99,15 +86,6 @@ const App: React.FC = () => {
 
       {/* Input */}
       <ChatInput onSend={sendMessage} disabled={isStreaming} />
-
-      {/* Settings Modal */}
-      {showSettings && (
-        <SettingsPanel
-          config={config}
-          onSaveConfig={saveConfig}
-          onClose={() => setShowSettings(false)}
-        />
-      )}
     </div>
   );
 };

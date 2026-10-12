@@ -50,7 +50,6 @@ export const MSG_TYPES = {
   // Webview → Host
   chat: "chat",
   getConfig: "getConfig",
-  saveConfig: "saveConfig",
   abort: "abort",
   loadSessions: "loadSessions",
   loadSession: "loadSession",
