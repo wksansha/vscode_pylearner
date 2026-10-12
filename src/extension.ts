@@ -50,6 +50,7 @@ import {
   type SubmissionDeps,
 } from "./submission/submissionReporter";
 import { makeSubmitCommand } from "./submission/submitCommand";
+import { makeRestoreCommand } from "./commands/restoreSubmissions";
 import { makeRunPull } from "./pull/pullCommand";
 
 // Global error handlers to prevent uncaught exceptions from crashing the extension host
@@ -258,6 +259,17 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   );
   context.subscriptions.push(
     vscode.commands.registerCommand(CMD_IDS.pullAssignments, () => void runPull())
+  );
+
+  // 恢复我的提交：从服务端拉回本人每个练习的最近一次提交（教师兜底渠道的对称功能）
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      CMD_IDS.restoreSubmissions,
+      makeRestoreCommand(
+        { teacherUrl: identityDeps.teacherUrl, globalState: context.globalState },
+        vscode
+      )
+    )
   );
 
   // Factory function - creates a fresh router with current config on demand

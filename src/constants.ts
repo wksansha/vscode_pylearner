@@ -9,6 +9,7 @@ export const CMD_IDS = {
   setStudentIdentity: "pylearner.setStudentIdentity",
   submitExercise: "pylearner.submitExercise",
   pullAssignments: "pylearner.pullAssignments",
+  restoreSubmissions: "pylearner.restoreSubmissions",
 } as const;
 
 export const VIEW_IDS = {

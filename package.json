@@ -23,7 +23,7 @@
         {
           "id": "pylearner-sidebar",
           "title": "Python Learner",
-          "icon": "assets/icon.png"
+          "icon": "assets/icon.svg"
         }
       ]
     },
@@ -44,12 +44,20 @@
       {
         "command": "pylearner.submitExercise",
         "title": "提交作业（当前文件）",
-        "category": "Python Learner"
+        "category": "Python Learner",
+        "icon": "$(cloud-upload)"
       },
       {
         "command": "pylearner.pullAssignments",
         "title": "拉取作业",
-        "category": "Python Learner"
+        "category": "Python Learner",
+        "icon": "$(repo-pull)"
+      },
+      {
+        "command": "pylearner.restoreSubmissions",
+        "title": "恢复我的提交",
+        "category": "Python Learner",
+        "icon": "$(history)"
       },
       {
         "command": "pylearner.openChat",
@@ -80,6 +88,25 @@
         "title": "Python Learner: Memory Graph"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "pylearner.submitExercise",
+          "when": "editorLangId == python",
+          "group": "navigation@901"
+        },
+        {
+          "command": "pylearner.pullAssignments",
+          "when": "editorLangId == python",
+          "group": "navigation@902"
+        },
+        {
+          "command": "pylearner.restoreSubmissions",
+          "when": "editorLangId == python",
+          "group": "navigation@903"
+        }
+      ]
+    },
     "configuration": {
       "title": "Python Learner",
       "properties": {
