@@ -215,6 +215,9 @@ export function createBehaviorListener(writer: L1Writer): vscode.Disposable {
     idleTimer = setTimeout(() => {
       tracker.checkIdle(Date.now());
       flushEnded();
+      // 自续扫描：挂起的会话（3min 续窗）无需等下一个打字事件或关窗，
+      // 最迟两轮空闲扫描后必然落盘。
+      resetIdleTimer();
     }, DEFAULTS.idleMs);
   };
 
