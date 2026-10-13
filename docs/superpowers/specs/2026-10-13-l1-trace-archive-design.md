@@ -78,7 +78,7 @@ L1Writer.append ───────┤
 <TRACE_DIR>/trace/<classId>/<studentId>/<surface>/<YYYY-MM-DD>.jsonl
 ```
 
-默认 `TRACE_DIR` 为 server 包下 `data/`（与 `assistant.db` 同级），环境变量 `TRACE_DIR` 可覆盖（与 `DB_PATH` 环境变量同款约定）。数据目录已在 classroom-assistant 的 .gitignore 中（`packages/server/data/`），不会进仓库。
+默认 `TRACE_DIR` 锚定为 **classroom-assistant 仓库的同级 `L1-data/`**（`resolveTraceDir` 以 `__dirname` 定位仓库位置，不随启动 cwd 漂移，本机与部署机同一套相对约定），环境变量 `TRACE_DIR` 可覆盖（指向独立数据盘等）。归档根目录在仓库之外，天然不进 git。
 
 ### 幂等合并
 
@@ -169,7 +169,7 @@ globalStorage/
 ## 5. 服务端设计（classroom-assistant）
 
 - 新文件 `packages/server/src/routes/traceArchive.ts`，以现有 `registerXxxRoutes(app, deps)` 模式在 `index.ts` 注册
-- 接口依赖注入：`{ traceDir }`（默认 `path.join(process.cwd(), "data")` 下 `trace/`，`TRACE_DIR` 覆盖），便于测试传临时目录
+- 接口依赖注入：`{ traceDir }`（缺省 classroom-assistant 同级 `L1-data/`，`resolveTraceDir` 锚定仓库位置，`TRACE_DIR` 覆盖），便于测试传临时目录
 - 复用 `logEvent` 打结构化日志（`archive.batch_received` / `archive.batch_rejected` 等）
 - 零 DB 改动，events 表 / aggregator / dashboard 完全不碰
 
