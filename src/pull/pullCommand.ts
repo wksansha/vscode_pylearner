@@ -28,9 +28,15 @@ export async function pullAssignments(deps: PullDeps): Promise<{ pulled: number;
       const rel = isProject ? `${weekDir}/${ex.dir}` : `${weekDir}/${ex.filename}`;
       const contentRes = await doFetch(`${deps.teacherUrl()}/api/exercises/${ex.id}/content`);
       if (!contentRes.ok) continue;
-      const body = await contentRes.json() as
-        | { kind: "file"; filename: string; content: string }
-        | { kind: "project"; filename: string; dir: string; entry: string; files: { path: string; content: string }[] };
+      let body: { kind: "file"; filename: string; content: string } | { kind: "project"; filename: string; dir: string; entry: string; files: { path: string; content: string }[] };
+      // 先读 text 再 parse：json() 失败后 body 已消费，text() 会抛 "Body has already been read"
+      const raw = await contentRes.text();
+      try {
+        body = JSON.parse(raw) as typeof body;
+      } catch {
+        // 旧版服务端（V1）返回纯文本 .py —— 兼容降级为单文件处理
+        body = { kind: "file", filename: ex.filename, content: raw };
+      }
 
       if (body.kind === "project") {
         let wrote = 0;

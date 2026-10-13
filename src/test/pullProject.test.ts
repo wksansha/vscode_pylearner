@@ -66,4 +66,21 @@ describe("pullAssignments 项目化", () => {
     expect(r.pulled).toBe(1);
     expect(written).toEqual(["week-03/weather-app/data/city.txt"]);
   });
+  it("旧服务端（V1）兼容：content 返回非 JSON 纯文本 → 降级为单文件写入", async () => {
+    const { deps, written } = makeDeps(new Set());
+    const oldPublished = [{
+      id: "a1", title: "第 3 周", week: 3,
+      exercises: [{ id: "ef", filename: "01.py", versionHash: "v1", kind: "file" as const }],
+    }];
+    const oldDeps: PullDeps = {
+      ...deps,
+      fetchImpl: (async (url: string) => {
+        if (url.endsWith("/api/assignments/published")) return new Response(JSON.stringify(oldPublished), { status: 200 });
+        return new Response("# old server content", { status: 200 });
+      }) as unknown as typeof fetch,
+    };
+    const r = await pullAssignments(oldDeps);
+    expect(r.pulled).toBe(1);
+    expect(written).toEqual(["week-03/01.py"]);
+  });
 });

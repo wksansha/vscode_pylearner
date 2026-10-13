@@ -4,7 +4,8 @@ import { pullAssignments } from "../../pull/pullCommand";
 function makeDeps(over: Record<string, unknown> = {}) {
   const files = new Map<string, string>();
   const state = new Map<string, unknown>();
-  const contentFetch = vi.fn(async () => ({ ok: true, json: async () => ({ kind: "file", filename: "exercise-01.py", content: "# exercise-id: x\nprint(1)\n" }) }));
+  const contentBody = { kind: "file", filename: "exercise-01.py", content: "# exercise-id: x\nprint(1)\n" };
+  const contentFetch = vi.fn(async () => ({ ok: true, json: async () => contentBody, text: async () => JSON.stringify(contentBody) }));
   const listFetch = vi.fn(async () => ({
     ok: true,
     json: async () => [{

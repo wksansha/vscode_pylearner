@@ -1,4 +1,7 @@
 // src/submission/exerciseLocator.ts
+//
+// 路径处理说明：本文件路径处理当前按 Windows（反斜杠）语义实现——课堂学生机为 Windows/麒麟内网环境。
+// POSIX 支持留作后续任务（错误路径在 POSIX 下会静默退化为"非练习"，不崩溃）。
 import { scanExerciseId } from "./exerciseHeader";
 
 export interface LocatedExercise {
