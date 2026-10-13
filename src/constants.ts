@@ -28,7 +28,6 @@ export const CONFIG_KEYS = {
   teacherUrl: "pylearner.teacher.url",
   teacherEnabled: "pylearner.teacher.enabled",
   submissionEnabled: "pylearner.submission.enabled",
-  submissionAutoSubmit: "pylearner.submission.autoSubmit",
 } as const;
 
 // API key lives in SecretStorage (never in settings.json — Settings Sync

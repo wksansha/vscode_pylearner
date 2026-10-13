@@ -167,11 +167,6 @@
           "type": "boolean",
           "default": true,
           "description": "启用作业提交通道"
-        },
-        "pylearner.submission.autoSubmit": {
-          "type": "boolean",
-          "default": true,
-          "description": "运行成功后自动提交（关闭后仅手动提交）"
         }
       }
     }

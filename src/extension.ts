@@ -51,6 +51,8 @@ import {
 import { makeSubmitCommand } from "./submission/submitCommand";
 import { makeRestoreCommand } from "./commands/restoreSubmissions";
 import { makeRunPull } from "./pull/pullCommand";
+import { makeRunSuccessReviewer } from "./submission/reviewRequester";
+import { buildProjectSnapshot as buildProjectSnapshotImpl } from "./submission/projectSnapshot";
 
 // Global error handlers to prevent uncaught exceptions from crashing the extension host
 process.on("uncaughtException", (err) => {
@@ -228,14 +230,45 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     globalState: context.globalState,
     saveIfDirty,
   };
-  // V2.0：自动提交链退役（makeHandleRunSuccess 已删）；Task 12 以评审链重新接上 setSubmissionHandler
-  // const handleRunSuccess = makeHandleRunSuccess(submissionDeps, vscode, readFile);
-  // l1Writer.setSubmissionHandler((ev) => {
-  //   const cfg = vscode.workspace.getConfiguration("pylearner");
-  //   if (!cfg.get<boolean>(CONFIG_KEYS.submissionEnabled, true)) return;
-  //   if (!cfg.get<boolean>(CONFIG_KEYS.submissionAutoSubmit, true)) return;
-  //   void handleRunSuccess(ev);   // 内部整体 try/catch，不会产生未处理拒绝
-  // });
+  // V2.0：F5 评审链（替代自动提交；提交按钮纯归档）
+  const projectFs = {
+    readDirectory: async (fsPath: string) => {
+      try {
+        const entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(fsPath));
+        return entries.map(([name, type]) => [name, { isDirectory: type === vscode.FileType.Directory }] as [string, { isDirectory: boolean }]);
+      } catch {
+        return null;
+      }
+    },
+    readFile: async (fsPath: string) => {
+      try {
+        return new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.file(fsPath)));
+      } catch {
+        return null;
+      }
+    },
+  };
+  const snapshotDeps = {
+    locator: {
+      rootFsPath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "",
+      join: (d: string, r: string) => vscode.Uri.joinPath(vscode.Uri.file(d), r).fsPath,
+      readFile,
+    },
+    projectFs,
+  };
+  const buildProjectSnapshot = (filePath: string, content: string) =>
+    buildProjectSnapshotImpl(snapshotDeps, filePath, content);
+  (submissionDeps as SubmissionDeps & { buildProjectSnapshot?: unknown }).buildProjectSnapshot = buildProjectSnapshot;
+  const reviewer = makeRunSuccessReviewer(
+    { teacherUrl: identityDeps.teacherUrl, getIdentity, buildProjectSnapshot,
+      notify: (m, w) => void (w ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)) },
+    vscode, readFile,
+  );
+  l1Writer.setSubmissionHandler((ev) => {
+    const cfg = vscode.workspace.getConfiguration("pylearner");
+    if (!cfg.get<boolean>(CONFIG_KEYS.submissionEnabled, true)) return;
+    void reviewer(ev);   // 内部整体 try/catch
+  });
   context.subscriptions.push(
     vscode.commands.registerCommand(
       CMD_IDS.submitExercise,
