@@ -93,6 +93,10 @@
       {
         "command": "pylearner.memoryGraph",
         "title": "Python Learner: Memory Graph"
+      },
+      {
+        "command": "pylearner.openDataFolder",
+        "title": "Python Learner: 打开数据文件夹"
       }
     ],
     "menus": {

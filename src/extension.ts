@@ -43,6 +43,7 @@ import { registerUpdateProfileCommand, registerResetProfileCommand } from "./com
 import { ProfileRefresher } from "./commands/autoRefresh";
 import { registerMemoryGraphCommand } from "./commands/memoryGraph";
 import { createTeacherReporter } from "./teacher/reporter";
+import { createTraceArchiver } from "./archive/archiver";
 import { loadStudentIdentity, migrateLegacyIdentity } from "./identity/studentIdentity";
 import { openIdentityPage, maybeOpenIdentityPage } from "./identity/identityPage";
 import { createSessionConfirmGate } from "./identity/sessionConfirm";
@@ -143,6 +144,8 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     const id = loadStudentIdentity(context.globalState);
     return { studentId: id.studentId, studentName: id.studentName }; // 可能为 null
   };
+  // 归档与分析共用同一身份源（spec §4.1）
+  l1Writer.setIdentityProvider(getIdentity);
 
   // 初始化教师端上报器（如果启用）
   let currentReporter: ReturnType<typeof createTeacherReporter> | undefined;
@@ -215,6 +218,19 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         .get<string>(CONFIG_KEYS.teacherUrl, "http://localhost:3000"),
     onSaved: () => { sessionGate?.reset(); updateStatusBar(); },
   };
+  // —— L1 全量归档（spec：docs/superpowers/specs/2026-10-13-l1-trace-archive-design.md）——
+  // 激活后 10s 归档一次（无定时器）；复用 teacher.url / teacher.enabled；失败静默下次激活补传
+  context.subscriptions.push(
+    createTraceArchiver({
+      globalStorageUri: context.globalStorageUri,
+      teacherUrl: identityDeps.teacherUrl,
+      isEnabled: () =>
+        vscode.workspace
+          .getConfiguration("pylearner")
+          .get<boolean>(CONFIG_KEYS.teacherEnabled, true),
+      log: (msg) => outputChannel.appendLine(msg),
+    })
+  );
   // 身份命令（A25：InputBox 弹窗删除，统一走身份页；状态栏点击即打开该页）
   context.subscriptions.push(
     vscode.commands.registerCommand(CMD_IDS.setStudentIdentity, () =>
@@ -452,6 +468,18 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     log("[pylearner] openSettings command registered");
   } catch (err) {
     log("[pylearner] failed to register openSettings command:", err);
+    throw err;
+  }
+
+  try {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(CMD_IDS.openDataFolder, () => {
+        void vscode.commands.executeCommand("revealInExplorer", context.globalStorageUri);
+      })
+    );
+    log("[pylearner] openDataFolder command registered");
+  } catch (err) {
+    log("[pylearner] failed to register openDataFolder command:", err);
     throw err;
   }
 
