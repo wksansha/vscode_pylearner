@@ -45,6 +45,7 @@ import { registerMemoryGraphCommand } from "./commands/memoryGraph";
 import { createTeacherReporter } from "./teacher/reporter";
 import { loadStudentIdentity, migrateLegacyIdentity } from "./identity/studentIdentity";
 import { openIdentityPage, maybeOpenIdentityPage } from "./identity/identityPage";
+import { createSessionConfirmGate } from "./identity/sessionConfirm";
 import {
   type SubmissionDeps,
 } from "./submission/submissionReporter";
@@ -180,16 +181,29 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   );
   statusBar.name = "课堂身份";
   statusBar.command = CMD_IDS.setStudentIdentity;
+  let sessionGate: ReturnType<typeof createSessionConfirmGate> | undefined;
   const updateStatusBar = () => {
     const id = loadStudentIdentity(context.globalState);
     statusBar.text = id.studentId
-      ? `$(account) ${id.studentId} ${id.studentName ?? ""}`.trim()
+      ? (sessionGate?.isConfirmed()
+          ? `$(account) ${id.studentId} ${id.studentName ?? ""}`.trim()
+          : `$(warning) ${id.studentId} ${id.studentName ?? ""} ?`.trim())
       : "$(account) 设置学号";
-    statusBar.tooltip = "课堂助手身份：点击设置学号/姓名";
+    statusBar.tooltip = sessionGate?.isConfirmed()
+      ? "课堂助手身份：点击设置学号/姓名"
+      : "身份待确认：点击任意作业按钮时确认，或点击此处重新设置";
     statusBar.show();
   };
-  updateStatusBar();
   context.subscriptions.push(statusBar);
+
+  // 共享电脑防误用（spec §5.5/§5.6）：每窗口会话首次点作业按钮时确认身份
+  sessionGate = createSessionConfirmGate({
+    vscode,
+    getIdentity,
+    onSwitchIdentity: () => openIdentityPage(identityDeps, context),
+    onConfirmed: () => updateStatusBar(),
+  });
+  updateStatusBar();
 
   // —— 作业系统装配（A1/A3/A8/A25/A26/A27）——
   const identityDeps = {
@@ -197,7 +211,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       vscode.workspace
         .getConfiguration("pylearner")
         .get<string>(CONFIG_KEYS.teacherUrl, "http://localhost:3000"),
-    onSaved: () => updateStatusBar(),
+    onSaved: () => { sessionGate?.reset(); updateStatusBar(); },
   };
   // 身份命令（A25：InputBox 弹窗删除，统一走身份页；状态栏点击即打开该页）
   context.subscriptions.push(
@@ -270,10 +284,10 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     void reviewer(ev);   // 内部整体 try/catch
   });
   context.subscriptions.push(
-    vscode.commands.registerCommand(
-      CMD_IDS.submitExercise,
-      makeSubmitCommand(submissionDeps, readFile)
-    )
+    vscode.commands.registerCommand(CMD_IDS.submitExercise, async () => {
+      if (!sessionGate || !(await sessionGate.ensureConfirmed())) return;
+      await makeSubmitCommand(submissionDeps, readFile)();
+    })
   );
 
   // 拉取：命令 + 激活时自动（A26）
@@ -291,17 +305,23 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       warn ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand(CMD_IDS.pullAssignments, () => void runPull())
+    vscode.commands.registerCommand(CMD_IDS.pullAssignments, async () => {
+      if (!sessionGate || !(await sessionGate.ensureConfirmed())) return;
+      void runPull();
+    })
   );
 
   // 恢复我的提交：从服务端拉回本人每个练习的最近一次提交（教师兜底渠道的对称功能）
   context.subscriptions.push(
     vscode.commands.registerCommand(
       CMD_IDS.restoreSubmissions,
-      makeRestoreCommand(
-        { teacherUrl: identityDeps.teacherUrl, globalState: context.globalState },
-        vscode
-      )
+      async () => {
+        if (!sessionGate || !(await sessionGate.ensureConfirmed())) return;
+        await makeRestoreCommand(
+          { teacherUrl: identityDeps.teacherUrl, globalState: context.globalState },
+          vscode
+        )();
+      }
     )
   );
 
