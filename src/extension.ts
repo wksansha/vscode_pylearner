@@ -46,7 +46,6 @@ import { createTeacherReporter } from "./teacher/reporter";
 import { loadStudentIdentity, migrateLegacyIdentity } from "./identity/studentIdentity";
 import { openIdentityPage, maybeOpenIdentityPage } from "./identity/identityPage";
 import {
-  makeHandleRunSuccess,
   type SubmissionDeps,
 } from "./submission/submissionReporter";
 import { makeSubmitCommand } from "./submission/submitCommand";
@@ -229,13 +228,14 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     globalState: context.globalState,
     saveIfDirty,
   };
-  const handleRunSuccess = makeHandleRunSuccess(submissionDeps, vscode, readFile);
-  l1Writer.setSubmissionHandler((ev) => {
-    const cfg = vscode.workspace.getConfiguration("pylearner");
-    if (!cfg.get<boolean>(CONFIG_KEYS.submissionEnabled, true)) return;
-    if (!cfg.get<boolean>(CONFIG_KEYS.submissionAutoSubmit, true)) return;
-    void handleRunSuccess(ev);   // 内部整体 try/catch，不会产生未处理拒绝
-  });
+  // V2.0：自动提交链退役（makeHandleRunSuccess 已删）；Task 12 以评审链重新接上 setSubmissionHandler
+  // const handleRunSuccess = makeHandleRunSuccess(submissionDeps, vscode, readFile);
+  // l1Writer.setSubmissionHandler((ev) => {
+  //   const cfg = vscode.workspace.getConfiguration("pylearner");
+  //   if (!cfg.get<boolean>(CONFIG_KEYS.submissionEnabled, true)) return;
+  //   if (!cfg.get<boolean>(CONFIG_KEYS.submissionAutoSubmit, true)) return;
+  //   void handleRunSuccess(ev);   // 内部整体 try/catch，不会产生未处理拒绝
+  // });
   context.subscriptions.push(
     vscode.commands.registerCommand(
       CMD_IDS.submitExercise,

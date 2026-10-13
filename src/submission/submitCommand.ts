@@ -2,11 +2,11 @@ import * as vscode from "vscode";
 import { submitCode, type SubmitOutcome, type SubmissionDeps } from "./submissionReporter";
 
 export const OUTCOME_TEXT: Record<SubmitOutcome, string> = {
-  submitted: "✅ 已提交，等待评审（结果见教师端作业矩阵）",
-  skipped: "该代码已提交过，未重复提交",
+  submitted: "✅ 已归档（运行成功后会自动评审并给出回执）",
+  skipped: "该代码已归档过，未重复提交",
   "not-exercise": "当前文件不是课堂练习（缺少课堂头部），无需提交",
   "identity-missing": "请先在身份页设置学号与姓名",
-  error: "提交失败，请稍后重试或联系教员",
+  error: "归档失败，请稍后重试或联系教员",
 };
 
 /** 手动提交命令（A3 兜底）：活动编辑器文件；dirty 先保存（A27） */
