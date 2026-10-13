@@ -52,6 +52,7 @@ import {
 import { makeSubmitCommand } from "./submission/submitCommand";
 import { makeRestoreCommand } from "./commands/restoreSubmissions";
 import { makeRunPull } from "./pull/pullCommand";
+import { createAssignmentPanel } from "./views/assignmentPanel";
 import { makeRunSuccessReviewer } from "./submission/reviewRequester";
 import { buildProjectSnapshot as buildProjectSnapshotImpl } from "./submission/projectSnapshot";
 
@@ -290,7 +291,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     })
   );
 
-  // 拉取：命令 + 激活时自动（A26）
+  // 拉取：命令触发（V2.0：激活自动拉取已取消，仅按钮触发）
   const pullDeps = {
     teacherUrl: identityDeps.teacherUrl,
     globalState: context.globalState,
@@ -323,6 +324,11 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         )();
       }
     )
+  );
+
+  // 「运行和调试」侧边栏「课堂作业」三按钮面板（spec §5.5）
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider(VIEW_IDS.assignmentPanel, createAssignmentPanel())
   );
 
   // Factory function - creates a fresh router with current config on demand
@@ -474,7 +480,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   // 这里保留 refresher 的创建，但不再触发定时刷新
   log("[pylearner] auto profile refresh disabled");
 
-  // 首启迁移旧 SecretStorage 身份；无身份 → 打开身份页；有身份 → 静默复核一次（A25）+ 激活自动拉取（A26，异步不阻塞激活）
+  // 首启迁移旧 SecretStorage 身份；无身份 → 打开身份页；有身份 → 静默复核一次（A25）（V2.0：自动拉取已取消，仅按钮触发）
   void (async () => {
     try {
       await migrateLegacyIdentity(context.globalState, context.secrets, {
@@ -499,7 +505,6 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
           /* 服务器不可达：静默，下次再复核 */
         }
       }
-      void runPull(); // 激活自动拉取（A26，后台）
     } catch (err) {
       log("[pylearner] identity first-run check failed:", err);
     }

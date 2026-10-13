@@ -15,6 +15,7 @@ export const CMD_IDS = {
 export const VIEW_IDS = {
   sidebarContainer: "pylearner-sidebar",
   chatView: "pylearner.chatView",
+  assignmentPanel: "pylearner.assignmentPanel",
 } as const;
 
 export const CONFIG_KEYS = {
