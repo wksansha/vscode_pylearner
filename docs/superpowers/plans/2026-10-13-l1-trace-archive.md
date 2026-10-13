@@ -4,7 +4,7 @@
 
 **Goal:** 学生端 L1 全量事件按学号分目录本地存储，并通过独立归档通道增量同步到 classroom-assistant 服务器（纯文件归档，不入库）。
 
-**Architecture:** 客户端 L1Writer 写路径加学号目录层（`trace/<studentId>/<surface>/<date>.jsonl`，未设身份落 `unknown/`）；新增 `src/archive/` 定时读本地 JSONL + 字节位点，按学号目录的 `.identity.json` 取批次身份，POST 到服务端新路由 `POST /api/trace/archive`；服务器按事件 id 幂等合并落文件。归档与分析上报两条链路完全解耦，L1Writer 除落盘目录外零改动。
+**Architecture:** 客户端 L1Writer 写路径加学号目录层（`trace/<studentId>/<surface>/<date>.jsonl`，未设身份落 `unknown/`）；新增 `src/archive/` 激活时读本地 JSONL + 字节位点，按学号目录的 `.identity.json` 取批次身份，POST 到服务端新路由 `POST /api/trace/archive`；服务器按事件 id 幂等合并落文件。归档与分析上报两条链路完全解耦，L1Writer 除落盘目录外零改动。
 
 **Tech Stack:** TypeScript + VS Code Extension API (^1.96, 仅稳定 API)；服务端 Express 5 + node:fs；测试 vitest（客户端）/ vitest + supertest（服务端）。
 
@@ -15,7 +15,7 @@
 - 两个仓库：客户端 `d:\ruan\vscode-pylearner`，服务端 `D:\ruan\classroom-assistant`。git 提交分别在各仓库执行（PowerShell 下用 `;` 分隔命令，不支持 `&&`）
 - 客户端测试：`npx vitest run <file>`；类型检查 `npx tsc --noEmit`；不新增任何 npm 依赖
 - 服务端测试：`pnpm --filter @classroom/server exec vitest run <file>`（在 `D:\ruan\classroom-assistant` 下执行）；类型检查 `pnpm --filter @classroom/server build`
-- 批次上限：≤200 事件或 ≤512KB/批；触发：启动后 10s 首扫 + 每 60 分钟；无事件驱动触发
+- 批次上限：≤200 事件或 ≤512KB/批；触发：仅激活后 10s 首扫一次，无定时/事件驱动触发（spec §4.4）
 - 保留字 `unknown` 目录永不归档；学号目录名仅 `[A-Za-z0-9_-]` 且 ≤32 字符、不与 6 个 surface 名冲突，不合法落 `unknown`
 - 协议字段：`student_id`/`student_name`/`class_id`/`surface`/`date`/`events`；响应 `{ ok, accepted, duplicated }`
 - 只用 VS Code 稳定 API（`vscode.workspace.fs` 等），麒麟兼容
@@ -1406,20 +1406,6 @@ describe("TraceArchiver.runOnce", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     archiver.dispose();
   });
-
-  it("定时器：10s 启动扫一次、每 60min 一次；dispose 后停止", async () => {
-    vi.useFakeTimers();
-    const fetchMock = stubFetch(() => new Response("{}", { status: 200 }));
-    const archiver = makeArchiver();
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    archiver.dispose();
-    await vi.advanceTimersByTimeAsync(10 * 60 * 60 * 1000);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    vi.useRealTimers();
-  });
 });
 ```
 
@@ -1444,7 +1430,6 @@ import {
 } from "./batcher";
 
 const STARTUP_DELAY_MS = 10_000;
-const INTERVAL_MS = 60 * 60 * 1000;
 
 export interface TraceArchiverDeps {
   globalStorageUri: vscode.Uri;
@@ -1586,22 +1571,17 @@ export function createTraceArchiver(deps: TraceArchiverDeps): TraceArchiver {
     }
   }
 
+  // 仅激活后延迟 10s 归档一次（spec §4.4）；无定时器/事件驱动，零后台常驻
   const startup = setTimeout(() => {
     void runOnce().catch((err: unknown) =>
       deps.log?.(`[archive] 启动归档失败：${err instanceof Error ? err.message : String(err)}`)
     );
   }, STARTUP_DELAY_MS);
-  const timer = setInterval(() => {
-    void runOnce().catch((err: unknown) =>
-      deps.log?.(`[archive] 定时归档失败：${err instanceof Error ? err.message : String(err)}`)
-    );
-  }, INTERVAL_MS);
 
   return {
     runOnce,
     dispose() {
       clearTimeout(startup);
-      clearInterval(timer);
     },
   };
 }
@@ -1616,7 +1596,7 @@ Expected: PASS
 
 ```bash
 git add src/archive/archiver.ts src/test/archive/archiver.test.ts
-git commit -m "feat(archive): 归档调度器——启动 10s + 每小时一轮，2xx/400 推进位点、5xx/断网续传"
+git commit -m "feat(archive): 归档调度器——激活后 10s 归档一次，2xx/400 推进位点、5xx/断网下次激活续传"
 ```
 
 ---
@@ -1669,7 +1649,7 @@ import { createTraceArchiver } from "./archive/archiver";
 
 ```ts
   // —— L1 全量归档（spec：docs/superpowers/specs/2026-10-13-l1-trace-archive-design.md）——
-  // 启动 10s 首扫 + 每小时一轮；复用 teacher.url / teacher.enabled；失败静默下轮补传
+  // 激活后 10s 归档一次（无定时器）；复用 teacher.url / teacher.enabled；失败静默下次激活补传
   context.subscriptions.push(
     createTraceArchiver({
       globalStorageUri: context.globalStorageUri,
