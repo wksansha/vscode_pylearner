@@ -6,13 +6,15 @@ interface SubmissionRow {
   exerciseId: string;
   code: string;
   submittedAt: number;
+  /** V2.0：项目提交的多文件内容；null/缺失 = 旧行（单文件） */
+  files?: { path: string; content: string }[] | null;
 }
 
 /** GET /api/assignments/published 行（恢复只用到 week/exercises → 本地路径映射） */
 interface PublishedLite {
   id: string;
   week: number;
-  exercises: { id: string; filename: string }[];
+  exercises: { id: string; filename: string; kind?: "file" | "project"; dir?: string }[];
 }
 
 export interface RestoreDeps {
@@ -51,7 +53,9 @@ export async function restoreSubmissions(deps: RestoreDeps): Promise<RestoreResu
   const pathOf = new Map<string, string>();
   for (const a of published) {
     for (const ex of a.exercises) {
-      pathOf.set(ex.id, `week-${String(a.week).padStart(2, "0")}/${ex.filename}`);
+      const week = `week-${String(a.week).padStart(2, "0")}`;
+      // V2.0：项目题用 dir 作基路径（week-XX/<dir>），单文件题仍用 filename
+      pathOf.set(ex.id, ex.kind === "project" && ex.dir ? `${week}/${ex.dir}` : `${week}/${ex.filename}`);
     }
   }
 
@@ -66,9 +70,15 @@ export async function restoreSubmissions(deps: RestoreDeps): Promise<RestoreResu
   for (const [exerciseId, sub] of latestByExercise(rows)) {
     const rel = pathOf.get(exerciseId);
     if (!rel) { result.unmapped.push(exerciseId); continue; }
-    const local = await deps.readFile(rel);
-    if (local === sub.code) { result.identical.push(rel); continue; }
-    plan.push({ rel, code: sub.code });
+    // V2.0：项目提交按 files 逐文件恢复；旧行（无 files）按单文件
+    const targets = sub.files && sub.files.length > 0
+      ? sub.files.map((f) => ({ rel: `${rel}/${f.path}`, code: f.content }))
+      : [{ rel, code: sub.code }];
+    for (const t of targets) {
+      const local = await deps.readFile(t.rel);
+      if (local === t.code) { result.identical.push(t.rel); continue; }
+      plan.push(t);
+    }
   }
 
   if (plan.length > 0 && deps.confirm) {
