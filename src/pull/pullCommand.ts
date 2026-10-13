@@ -1,7 +1,7 @@
 /** 本地轻量类型（learner 不依赖 @classroom/shared——F6；字段与 server /api/assignments/published 对齐） */
 interface PublishedAssignmentLite {
   id: string; title: string; week: number;
-  exercises: { id: string; filename: string; versionHash: string }[];
+  exercises: { id: string; filename: string; versionHash: string; kind?: "file" | "project"; dir?: string; entry?: string }[];
 }
 
 export interface PullDeps {
@@ -22,20 +22,44 @@ export async function pullAssignments(deps: PullDeps): Promise<{ pulled: number;
   const versions = (deps.globalState.get(PULLED_VERSIONS_KEY) ?? {}) as Record<string, string>;
   const result = { pulled: 0, updateNotices: [] as string[] };
   for (const a of list) {
+    const weekDir = `week-${String(a.week).padStart(2, "0")}`;
     for (const ex of a.exercises) {
-      const rel = `week-${String(a.week).padStart(2, "0")}/${ex.filename}`;
-      if (await deps.fileExists(rel)) {
-        if (versions[ex.id] && versions[ex.id] !== ex.versionHash) {
-          result.updateNotices.push(`${rel} 题目已更新，本地文件未改动，请注意最新要求`);   // A30 仅通知
-        }
-        versions[ex.id] = ex.versionHash;
-        continue;
-      }
+      const isProject = ex.kind === "project" && ex.dir;
+      const rel = isProject ? `${weekDir}/${ex.dir}` : `${weekDir}/${ex.filename}`;
       const contentRes = await doFetch(`${deps.teacherUrl()}/api/exercises/${ex.id}/content`);
       if (!contentRes.ok) continue;
-      await deps.writeFile(rel, await contentRes.text());
+      const body = await contentRes.json() as
+        | { kind: "file"; filename: string; content: string }
+        | { kind: "project"; filename: string; dir: string; entry: string; files: { path: string; content: string }[] };
+
+      if (body.kind === "project") {
+        let wrote = 0;
+        for (const f of body.files) {
+          const fileRel = `${rel}/${f.path}`;
+          if (await deps.fileExists(fileRel)) continue;
+          await deps.writeFile(fileRel, f.content);
+          wrote++;
+        }
+        const anchor = `${rel}/${body.entry}`;
+        if (wrote === 0 && await deps.fileExists(anchor)) {
+          if (versions[ex.id] && versions[ex.id] !== ex.versionHash) {
+            result.updateNotices.push(`${rel} 题目已更新，本地文件未改动，请注意最新要求`);   // A30 仅通知
+          }
+        }
+        result.pulled += wrote;
+      } else {
+        const fileRel = `${weekDir}/${ex.filename}`;
+        if (await deps.fileExists(fileRel)) {
+          if (versions[ex.id] && versions[ex.id] !== ex.versionHash) {
+            result.updateNotices.push(`${fileRel} 题目已更新，本地文件未改动，请注意最新要求`);
+          }
+          versions[ex.id] = ex.versionHash;
+          continue;
+        }
+        await deps.writeFile(fileRel, body.content);
+        result.pulled++;
+      }
       versions[ex.id] = ex.versionHash;
-      result.pulled++;
     }
   }
   await deps.globalState.update(PULLED_VERSIONS_KEY, versions);
