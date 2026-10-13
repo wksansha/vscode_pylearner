@@ -15,6 +15,7 @@ import { loadL2Doc, loadL3Doc } from "../memory/store";
 import { L3_SLOTS } from "../memory/paths";
 import { readTraceEntities } from "../snapshot/reader";
 import type { Entity } from "../snapshot/entity";
+import { loadStudentIdentity } from "../identity/studentIdentity";
 
 export function registerMemoryGraphCommand(
   context: vscode.ExtensionContext
@@ -37,20 +38,21 @@ export function registerMemoryGraphCommand(
 
     panel.webview.onDidReceiveMessage(async (payload: Record<string, unknown>) => {
       if (payload.type === MSG_TYPES.getMemoryGraph) {
-        await postGraph(panel.webview, context.globalStorageUri);
+        await postGraph(panel.webview, context.globalStorageUri, loadStudentIdentity(context.globalState).studentId);
       }
     });
 
-    await postGraph(panel.webview, context.globalStorageUri);
+    await postGraph(panel.webview, context.globalStorageUri, loadStudentIdentity(context.globalState).studentId);
   });
 }
 
 async function postGraph(
   webview: vscode.Webview,
-  storageUri: vscode.Uri
+  storageUri: vscode.Uri,
+  studentId: string | null
 ): Promise<void> {
   try {
-    const graph = await loadGraph(storageUri);
+    const graph = await loadGraph(storageUri, studentId);
     await webview.postMessage({ type: MSG_TYPES.memoryGraphData, graph });
   } catch (err) {
     await webview.postMessage({
@@ -60,7 +62,7 @@ async function postGraph(
   }
 }
 
-async function loadGraph(storageUri: vscode.Uri): Promise<CitationGraph> {
+async function loadGraph(storageUri: vscode.Uri, studentId: string | null): Promise<CitationGraph> {
   const l3Docs: Record<string, Document> = {};
   for (const slot of L3_SLOTS) {
     const doc = await loadL3Doc(storageUri, slot);
@@ -72,7 +74,7 @@ async function loadGraph(storageUri: vscode.Uri): Promise<CitationGraph> {
   for (const surface of SURFACES) {
     const doc = await loadL2Doc(storageUri, surface);
     if (doc) l2Docs[surface] = doc;
-    entities[surface] = await readTraceEntities(storageUri, surface);
+    entities[surface] = await readTraceEntities(storageUri, surface, studentId);
   }
 
   return buildCitationGraph({ l3Docs, l2Docs, entities });

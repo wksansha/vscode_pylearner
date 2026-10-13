@@ -13,6 +13,7 @@ import { loadL2Meta } from "../memory/store";
 import { DEFAULT_AUTO_REFRESH, shouldAutoRefresh } from "../memory/settings";
 import { readTraceEntities } from "../snapshot/reader";
 import { runProfileUpdate } from "./updateProfile";
+import { loadStudentIdentity, type StudentIdentity } from "../identity/studentIdentity";
 
 export class ProfileRefresher {
   private running = false;
@@ -21,7 +22,8 @@ export class ProfileRefresher {
   constructor(
     private readonly storageUri: vscode.Uri,
     private readonly secrets: vscode.SecretStorage,
-    private readonly routerFactory: () => LlmRouter
+    private readonly routerFactory: () => LlmRouter,
+    private readonly getIdentity: () => StudentIdentity
   ) {}
 
   /** Fire-and-forget entry point. Never throws; safe to call on every trigger. */
@@ -42,7 +44,7 @@ export class ProfileRefresher {
       this.lastRunAt = now;
       try {
         const router = this.routerFactory();
-        await runProfileUpdate(this.storageUri, this.secrets, router);
+        await runProfileUpdate(this.storageUri, this.secrets, router, this.getIdentity().studentId);
       } catch (err) {
         // A background refresh must never surface errors to the user.
         console.error("[pylearner] auto profile refresh failed:", err);
@@ -74,7 +76,7 @@ export class ProfileRefresher {
     for (const surface of CONSOLIDATION_SURFACES) {
       const meta = await loadL2Meta(this.storageUri, surface);
       const seen = new Set(meta.seen_entity_refs);
-      const entities = await readTraceEntities(this.storageUri, surface);
+      const entities = await readTraceEntities(this.storageUri, surface, this.getIdentity().studentId);
       for (const entity of entities) {
         if (!seen.has(`${surface}:${entity.id}`)) total += 1;
       }

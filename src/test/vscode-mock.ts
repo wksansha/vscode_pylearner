@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 
 vi.mock("vscode", () => ({
+  FileType: { File: 1, Directory: 2 },
   Uri: {
     joinPath(base: { toString(): string }, ...paths: string[]) {
       const url = new URL(base.toString());
@@ -22,6 +23,7 @@ vi.mock("vscode", () => ({
   workspace: {
     fs: {
       readFile: vi.fn(),
+      readDirectory: vi.fn(),
       createDirectory: vi.fn(),
       writeFile: vi.fn(),
       rename: vi.fn(),

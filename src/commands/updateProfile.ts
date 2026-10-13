@@ -16,10 +16,11 @@ import type { Document } from "../memory/document";
 import { readTraceEntities } from "../snapshot/reader";
 import { synthesizeOverview, type OverviewDeps } from "../memory/overview";
 import { l3File, l3MetaFile, overviewFile } from "../memory/paths";
+import { loadStudentIdentity } from "../identity/studentIdentity";
 
-function makeDeps(storageUri: vscode.Uri, router: LlmRouter, apiKey: string, onEvent?: (event: Record<string, unknown>) => void, log?: (msg: string) => void): ConsolidatorDeps {
+function makeDeps(storageUri: vscode.Uri, router: LlmRouter, apiKey: string, studentId: string | null, onEvent?: (event: Record<string, unknown>) => void, log?: (msg: string) => void): ConsolidatorDeps {
   return {
-    readEntities: (surface) => readTraceEntities(storageUri, surface),
+    readEntities: (surface) => readTraceEntities(storageUri, surface, studentId),
     loadAllL2Docs: async () => {
       const docs: Record<string, Document> = {};
       for (const surface of CONSOLIDATION_SURFACES) {
@@ -123,13 +124,14 @@ export async function runProfileUpdate(
   storageUri: vscode.Uri,
   secrets: vscode.SecretStorage,
   router: LlmRouter,
+  studentId: string | null,
   onEvent?: (event: Record<string, unknown>) => void,
   cancellationToken?: vscode.CancellationToken,
   log?: (msg: string) => void
 ): Promise<void> {
   const pipelineStart = Date.now();
   const apiKey = (await secrets.get(SECRET_KEYS.llmApiKey)) ?? "";
-  const deps = makeDeps(storageUri, router, apiKey, onEvent, log);
+  const deps = makeDeps(storageUri, router, apiKey, studentId, onEvent, log);
 
   // Track timing for summary
   const stageTimes: Array<{ stage: string; elapsed_ms: number }> = [];
@@ -221,6 +223,7 @@ export function registerUpdateProfileCommand(
             context.globalStorageUri,
             context.secrets,
             router,
+            loadStudentIdentity(context.globalState).studentId,
             (event) => {
               // Emit progress events for the UI
               if (event.stage) {
@@ -299,6 +302,7 @@ export function registerResetProfileCommand(
             context.globalStorageUri,
             context.secrets,
             router,
+            loadStudentIdentity(context.globalState).studentId,
             (event) => {
               // Emit progress events for the UI
               if (event.stage) {

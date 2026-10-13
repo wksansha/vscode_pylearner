@@ -4,17 +4,23 @@
 // unit-testable without the `vscode` module. This is the only L1 read path
 // the consolidation flow needs (trace events are append-only; the id-set diff
 // against `*.meta.json` decides what is "new since last update").
+//
+// 本地 L1 按学号分目录（spec §4.1）：读 trace/<studentId>/<surface>/；无身份返回空。
 
 import * as vscode from "vscode";
 import type { Surface } from "../constants";
+import { studentDirName, UNKNOWN_DIR } from "../archive/identity";
 import { parseTraceLine, traceEventToEntity } from "./adapter";
 import type { Entity } from "./entity";
 
 export async function readTraceEntities(
   storageUri: vscode.Uri,
-  surface: Surface
+  surface: Surface,
+  studentId: string | null
 ): Promise<Entity[]> {
-  const dirUri = vscode.Uri.joinPath(storageUri, "trace", surface);
+  const dirName = studentDirName(studentId);
+  if (dirName === UNKNOWN_DIR) return [];
+  const dirUri = vscode.Uri.joinPath(storageUri, "trace", dirName, surface);
   let entries: Array<[string, vscode.FileType]>;
   try {
     entries = await vscode.workspace.fs.readDirectory(dirUri);

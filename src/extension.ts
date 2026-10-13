@@ -341,7 +341,8 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   const refresher = new ProfileRefresher(
     context.globalStorageUri,
     context.secrets,
-    routerFactory
+    routerFactory,
+    getIdentity
   );
   log("[pylearner] profile refresher created");
 
