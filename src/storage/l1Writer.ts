@@ -3,16 +3,30 @@ import { ulid } from "ulidx";
 import type { Surface } from "../constants";
 import type { TraceEvent } from "../events/types";
 import { makeEvent } from "../events/types";
+import { studentDirName, UNKNOWN_DIR } from "../archive/identity";
 
 export interface TeacherReporter {
   report(event: TraceEvent): Promise<void>;
 }
+
+/** 学号目录下的身份快照（供归档批次取身份，spec §4.3） */
+export interface ArchiveIdentity {
+  studentId: string;
+  studentName: string;
+  classId: string;
+}
+
+/** append 时读取的当前身份；classId 缺省由快照层补 default */
+export type IdentityProvider = () => { studentId: string | null; studentName: string | null; classId?: string } | undefined;
 
 export class L1Writer {
   private baseUri: vscode.Uri;
   private locks: Map<string, Promise<void>> = new Map();
   private reporter?: TeacherReporter;
   private submissionHandler?: (event: TraceEvent) => void;
+  private getIdentity?: IdentityProvider;
+  // identity.json 变更检测（内存缓存，避免每事件读盘）
+  private lastIdentityJson: string | null = null;
 
   constructor(storageUri: vscode.Uri) {
     this.baseUri = vscode.Uri.joinPath(storageUri, "trace");
@@ -24,6 +38,11 @@ export class L1Writer {
 
   setSubmissionHandler(handler?: (event: TraceEvent) => void) {
     this.submissionHandler = handler;
+  }
+
+  /** 注入身份读取器：每次 append 时调用，学号变更后下一条事件立即落新目录（spec §4.1） */
+  setIdentityProvider(provider?: IdentityProvider) {
+    this.getIdentity = provider;
   }
 
   async append(
@@ -56,7 +75,8 @@ export class L1Writer {
 
   private async writeEvent(event: TraceEvent): Promise<void> {
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    const dirUri = vscode.Uri.joinPath(this.baseUri, event.surface);
+    const dirName = studentDirName(this.getIdentity?.()?.studentId ?? null);
+    const dirUri = vscode.Uri.joinPath(this.baseUri, dirName, event.surface);
     const fileUri = vscode.Uri.joinPath(dirUri, `${today}.jsonl`);
     const line = JSON.stringify(event) + "\n";
 
@@ -71,6 +91,7 @@ export class L1Writer {
       } catch {
         // directory exists
       }
+      await this.writeIdentitySnapshot(dirName);
       const encoder = new TextEncoder();
       let existing: Uint8Array;
       try {
@@ -85,6 +106,28 @@ export class L1Writer {
     });
     this.locks.set(event.surface, next.catch(() => {}));
     await next;
+  }
+
+  /** 学号目录下维护 .identity.json（仅内容变化时覆写；写失败不影响事件落盘） */
+  private async writeIdentitySnapshot(dirName: string): Promise<void> {
+    const identity = this.getIdentity?.();
+    if (!identity?.studentId || !identity.studentName || dirName === UNKNOWN_DIR) return;
+    const snapshot: ArchiveIdentity = {
+      studentId: identity.studentId,
+      studentName: identity.studentName,
+      classId: identity.classId || "default",
+    };
+    const json = JSON.stringify(snapshot);
+    if (json === this.lastIdentityJson) return;
+    this.lastIdentityJson = json;
+    try {
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.joinPath(this.baseUri, dirName, ".identity.json"),
+        new TextEncoder().encode(json + "\n")
+      );
+    } catch {
+      // 快照写失败下一条事件会再试
+    }
   }
 }
 
