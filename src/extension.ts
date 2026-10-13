@@ -50,6 +50,7 @@ import {
   type SubmissionDeps,
 } from "./submission/submissionReporter";
 import { makeSubmitCommand } from "./submission/submitCommand";
+import { collectSubmissionTargets } from "./submission/collectTargets";
 import { makeRestoreCommand } from "./commands/restoreSubmissions";
 import { makeRunPull } from "./pull/pullCommand";
 import { createAssignmentPanel } from "./views/assignmentPanel";
@@ -274,6 +275,10 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   const buildProjectSnapshot = (filePath: string, content: string) =>
     buildProjectSnapshotImpl(snapshotDeps, filePath, content);
   (submissionDeps as SubmissionDeps & { buildProjectSnapshot?: unknown }).buildProjectSnapshot = buildProjectSnapshot;
+  // V2.0 提交按钮：一键归档全部练习——复用 projectFs 适配器遍历 week-XX 收集目标（readFile 供回退单文件路径）
+  (submissionDeps as SubmissionDeps & { collectTargets?: unknown }).collectTargets =
+    (rootFsPath: string) => collectSubmissionTargets(projectFs, rootFsPath);
+  (submissionDeps as SubmissionDeps & { readFile?: unknown }).readFile = readFile;
   const reviewer = makeRunSuccessReviewer(
     { teacherUrl: identityDeps.teacherUrl, getIdentity, buildProjectSnapshot,
       notify: (m, w) => void (w ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)) },
@@ -287,7 +292,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   context.subscriptions.push(
     vscode.commands.registerCommand(CMD_IDS.submitExercise, async () => {
       if (!sessionGate || !(await sessionGate.ensureConfirmed())) return;
-      await makeSubmitCommand(submissionDeps, readFile)();
+      await makeSubmitCommand(submissionDeps, vscode)();
     })
   );
 
