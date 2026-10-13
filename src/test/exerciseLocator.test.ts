@@ -32,6 +32,16 @@ describe("exerciseLocator", () => {
     const none = { ...deps, readFile: async () => null };
     expect(await resolveExercise(none, path.join(root, "week-03", "misc", "a.py"), "x")).toBeNull();
   });
+  it("非补零 week 目录名（week-5）→ 项目经 exercise.json 定位", async () => {
+    const files5 = {
+      ...files,
+      [path.join(root, "week-5", "weather-app", "exercise.json")]: `{ "exerciseId": "${ID}", "entry": "main.py" }`,
+      [path.join(root, "week-5", "weather-app", "main.py")]: "# main",
+    };
+    const deps5 = { ...deps, readFile: async (fsPath: string) => files5[fsPath] ?? null };
+    const r = await resolveExercise(deps5, path.join(root, "week-5", "weather-app", "utils.py"), "def f(): pass");
+    expect(r).toEqual({ exerciseId: ID, kind: "project", entry: "main.py", projectDirFsPath: path.join(root, "week-5", "weather-app") });
+  });
   it("week 目录外的文件 → null", async () => {
     expect(await resolveExercise(deps, path.join(root, "other", "a.py"), "x")).toBeNull();
   });

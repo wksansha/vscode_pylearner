@@ -15,7 +15,14 @@ export interface SubmissionTarget {
   content: string;          // 锚点文件内容（submitCode 以此定位）
 }
 
+// 周段 \d+ 宽容：接受非补零目录名（week-5，跟随教师仓库实际目录）
 const WEEK_DIR_RE = /^week-\d+$/;
+
+/** 从 label 提取周号数值（week-2/... → 2）；无周段 → 排最后 */
+const weekNumOf = (label: string): number => {
+  const m = label.match(/^week-(\d+)\//);
+  return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+};
 
 /**
  * 遍历工作区 week-XX 目录，收集全部提交目标：
@@ -56,7 +63,11 @@ export async function collectSubmissionTargets(fs: WorkspaceFs, rootFsPath: stri
       }
     }
   }
-  // 排序：周号升序 + 周内按名称（week-XX 零填充 → label 字符串序即周序）
-  targets.sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
+  // 排序：周号数值升序（兼容非补零 week-5，避免 week-10 排在 week-2 前）+ 周内按名称
+  targets.sort((a, b) => {
+    const d = weekNumOf(a.label) - weekNumOf(b.label);
+    if (d !== 0) return d;
+    return a.label < b.label ? -1 : a.label > b.label ? 1 : 0;
+  });
   return targets;
 }

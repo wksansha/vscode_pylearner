@@ -93,7 +93,7 @@ describe("collectSubmissionTargets（V2.0 提交按钮：一键归档全部练�
     expect(targets[0].content).toBe("# default entry");
   });
 
-  it("排序：week-02 在 week-10 之前（零填充字符串序），周内按名称", async () => {
+  it("排序：week-02 在 week-10 之前（数值序），周内按名称", async () => {
     const tree: Record<string, "dir" | "f"> = { [root]: "dir" };
     const files: Record<string, string> = {};
     for (const week of ["week-02", "week-10"]) {
@@ -103,5 +103,37 @@ describe("collectSubmissionTargets（V2.0 提交按钮：一键归档全部练�
     }
     const targets = await collectSubmissionTargets(makeFs(tree, files), root);
     expect(targets.map((t) => t.label)).toEqual(["week-02/a.py", "week-10/a.py"]);
+  });
+
+  it("排序：非补零与补零混合按周号数值序（week-2 < week-3 < week-10）", async () => {
+    const tree: Record<string, "dir" | "f"> = { [root]: "dir" };
+    const files: Record<string, string> = {};
+    for (const week of ["week-10", "week-2", "week-3"]) {
+      tree[path.join(root, week)] = "dir";
+      tree[path.join(root, week, "a.py")] = "f";
+      files[path.join(root, week, "a.py")] = `# exercise-id: ${ID_A}\nprint(1)`;
+    }
+    const targets = await collectSubmissionTargets(makeFs(tree, files), root);
+    expect(targets.map((t) => t.label)).toEqual(["week-2/a.py", "week-3/a.py", "week-10/a.py"]);
+  });
+
+  it("非补零 week 目录（week-5）内的单文件与项目均被收集", async () => {
+    const app = path.join(root, "week-5", "weather-app");
+    const tree: Record<string, "dir" | "f"> = {
+      [root]: "dir",
+      [path.join(root, "week-5")]: "dir",
+      [path.join(root, "week-5", "01-hello.py")]: "f",
+      [app]: "dir",
+      [path.join(app, "exercise.json")]: "f",
+      [path.join(app, "main.py")]: "f",
+    };
+    const hello = `# exercise-id: ${ID_A}\nprint("hi")`;
+    const files: Record<string, string> = {
+      [path.join(root, "week-5", "01-hello.py")]: hello,
+      [path.join(app, "exercise.json")]: `{ "exerciseId": "${ID_B}", "entry": "main.py" }`,
+      [path.join(app, "main.py")]: "# entry code",
+    };
+    const targets = await collectSubmissionTargets(makeFs(tree, files), root);
+    expect(targets.map((t) => t.label)).toEqual(["week-5/01-hello.py", "week-5/weather-app"]);
   });
 });

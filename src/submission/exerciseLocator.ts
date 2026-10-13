@@ -32,8 +32,6 @@ export async function readExerciseManifest(
   }
 }
 
-const WEEK_SEG_RE = /[\\/]week-(\d{2})[\\/]/;
-
 /** 定位当前文件所属 exercise：优先头部 id（单文件）；否则按 week-XX/<dir>/exercise.json（项目） */
 export async function resolveExercise(
   deps: LocatorDeps, filePath: string, content: string,
@@ -44,8 +42,9 @@ export async function resolveExercise(
   const norm = filePath.replace(/\//g, "\\");
   const root = deps.rootFsPath.replace(/\//g, "\\").replace(/[\\/]+$/, "");
   if (!norm.startsWith(root + "\\")) return null;
-  const rel = norm.slice(root.length + 1);          // week-03\<...>
-  const m = rel.match(/^week-\d{2}\\([^\\]+)\\(.+)$/);
+  const rel = norm.slice(root.length + 1);          // week-XX\<...>
+  // 周段 \d+ 宽容匹配：接受非补零目录名（week-5，跟随教师仓库实际目录）
+  const m = rel.match(/^week-\d+\\([^\\]+)\\(.+)$/);
   if (!m) return null;                               // week 目录一级 .py（无头部 id）或目录外 → 非 exercise
   const projectDirFsPath = deps.join(deps.join(root, rel.split("\\")[0]), m[1]);
   const manifest = await readExerciseManifest(deps, projectDirFsPath);

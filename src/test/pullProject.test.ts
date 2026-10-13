@@ -66,6 +66,25 @@ describe("pullAssignments 项目化", () => {
     expect(r.pulled).toBe(1);
     expect(written).toEqual(["week-03/weather-app/data/city.txt"]);
   });
+  it("服务端下发非补零 weekDir（week-5）→ 文件写入 week-5/", async () => {
+    const { deps, written } = makeDeps(new Set());
+    const wdDeps: PullDeps = {
+      ...deps,
+      fetchImpl: (async (url: string) => {
+        if (url.endsWith("/api/assignments/published")) return new Response(JSON.stringify([{ ...published[0], weekDir: "week-5" }]), { status: 200 });
+        if (url.endsWith("/api/exercises/ep/content")) return new Response(JSON.stringify(projectContent), { status: 200 });
+        if (url.endsWith("/api/exercises/ef/content")) return new Response(JSON.stringify({ kind: "file", filename: "01.py", content: "# s" }), { status: 200 });
+        return new Response("{}", { status: 404 });
+      }) as unknown as typeof fetch,
+    };
+    const r = await pullAssignments(wdDeps);
+    expect(r.pulled).toBe(3);
+    expect(written.sort()).toEqual([
+      "week-5/01.py",
+      "week-5/weather-app/data/city.txt",
+      "week-5/weather-app/main.py",
+    ].sort());
+  });
   it("旧服务端（V1）兼容：content 返回非 JSON 纯文本 → 降级为单文件写入", async () => {
     const { deps, written } = makeDeps(new Set());
     const oldPublished = [{

@@ -14,6 +14,8 @@ interface SubmissionRow {
 interface PublishedLite {
   id: string;
   week: number;
+  /** 教师仓库实际目录名（如 "week-5"）；缺省 = 补零 week-03 */
+  weekDir?: string;
   exercises: { id: string; filename: string; kind?: "file" | "project"; dir?: string }[];
 }
 
@@ -52,8 +54,8 @@ export async function restoreSubmissions(deps: RestoreDeps): Promise<RestoreResu
   const published = (await listRes.json()) as PublishedLite[];
   const pathOf = new Map<string, string>();
   for (const a of published) {
+    const week = a.weekDir ?? `week-${String(a.week).padStart(2, "0")}`;
     for (const ex of a.exercises) {
-      const week = `week-${String(a.week).padStart(2, "0")}`;
       // V2.0：项目题用 dir 作基路径（week-XX/<dir>），单文件题仍用 filename
       pathOf.set(ex.id, ex.kind === "project" && ex.dir ? `${week}/${ex.dir}` : `${week}/${ex.filename}`);
     }

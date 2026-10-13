@@ -47,6 +47,21 @@ describe("restoreSubmissions 项目化", () => {
     expect(r.restored.includes("week-03/weather-app/utils.py")).toBe(true);
     expect(r.identical).toEqual(["week-03/weather-app/main.py"]);
   });
+  it("服务端下发非补零 weekDir（week-5）→ 恢复路径 week-5/weather-app/main.py", async () => {
+    const { deps } = makeDeps({});
+    const wdDeps: RestoreDeps = {
+      ...deps,
+      fetchImpl: (async (url: string) => {
+        if (url.endsWith("/api/assignments/published")) return new Response(JSON.stringify([{ ...published[0], weekDir: "week-5" }]), { status: 200 });
+        if (url.includes("/api/submissions/student/")) return new Response(JSON.stringify(submissions), { status: 200 });
+        return new Response("{}", { status: 404 });
+      }) as unknown as typeof fetch,
+    };
+    const r = await restoreSubmissions(wdDeps);
+    expect(r.restored.sort()).toEqual([
+      "week-5/01.py", "week-5/weather-app/main.py", "week-5/weather-app/utils.py",
+    ].sort());
+  });
   it("旧服务端行为兼容：行无 files 字段按单文件恢复", async () => {
     const { deps } = makeDeps({});
     const r = await restoreSubmissions(deps);

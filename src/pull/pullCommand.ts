@@ -1,6 +1,8 @@
 /** 本地轻量类型（learner 不依赖 @classroom/shared——F6；字段与 server /api/assignments/published 对齐） */
 interface PublishedAssignmentLite {
   id: string; title: string; week: number;
+  /** 教师仓库实际目录名（如 "week-5"）；缺省 = 补零 week-03 */
+  weekDir?: string;
   exercises: { id: string; filename: string; versionHash: string; kind?: "file" | "project"; dir?: string; entry?: string }[];
 }
 
@@ -22,7 +24,7 @@ export async function pullAssignments(deps: PullDeps): Promise<{ pulled: number;
   const versions = (deps.globalState.get(PULLED_VERSIONS_KEY) ?? {}) as Record<string, string>;
   const result = { pulled: 0, updateNotices: [] as string[] };
   for (const a of list) {
-    const weekDir = `week-${String(a.week).padStart(2, "0")}`;
+    const weekDir = a.weekDir ?? `week-${String(a.week).padStart(2, "0")}`;
     for (const ex of a.exercises) {
       const isProject = ex.kind === "project" && ex.dir;
       const rel = isProject ? `${weekDir}/${ex.dir}` : `${weekDir}/${ex.filename}`;
