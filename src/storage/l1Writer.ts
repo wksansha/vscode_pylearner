@@ -75,7 +75,9 @@ export class L1Writer {
 
   private async writeEvent(event: TraceEvent): Promise<void> {
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    const dirName = studentDirName(this.getIdentity?.()?.studentId ?? null);
+    // 身份只读一次：目录名与快照共用同一份，避免两次读取间身份切换导致目录/快照错位（TOCTOU）
+    const identity = this.getIdentity?.();
+    const dirName = studentDirName(identity?.studentId ?? null);
     const dirUri = vscode.Uri.joinPath(this.baseUri, dirName, event.surface);
     const fileUri = vscode.Uri.joinPath(dirUri, `${today}.jsonl`);
     const line = JSON.stringify(event) + "\n";
@@ -91,7 +93,7 @@ export class L1Writer {
       } catch {
         // directory exists
       }
-      await this.writeIdentitySnapshot(dirName);
+      await this.writeIdentitySnapshot(dirName, identity);
       const encoder = new TextEncoder();
       let existing: Uint8Array;
       try {
@@ -108,9 +110,8 @@ export class L1Writer {
     await next;
   }
 
-  /** 学号目录下维护 .identity.json（仅内容变化时覆写；写失败不影响事件落盘） */
-  private async writeIdentitySnapshot(dirName: string): Promise<void> {
-    const identity = this.getIdentity?.();
+  /** 学号目录下维护 .identity.json（仅内容变化时覆写；写成功才标记缓存，失败不标记 → 下一条事件重试；快照失败不影响事件落盘） */
+  private async writeIdentitySnapshot(dirName: string, identity: ReturnType<IdentityProvider>): Promise<void> {
     if (!identity?.studentId || !identity.studentName || dirName === UNKNOWN_DIR) return;
     const snapshot: ArchiveIdentity = {
       studentId: identity.studentId,
@@ -119,12 +120,13 @@ export class L1Writer {
     };
     const json = JSON.stringify(snapshot);
     if (json === this.lastIdentityJson) return;
-    this.lastIdentityJson = json;
     try {
       await vscode.workspace.fs.writeFile(
         vscode.Uri.joinPath(this.baseUri, dirName, ".identity.json"),
         new TextEncoder().encode(json + "\n")
       );
+      // 写成功才更新缓存；失败保持未写状态，下一条事件自动重试
+      this.lastIdentityJson = json;
     } catch {
       // 快照写失败下一条事件会再试
     }

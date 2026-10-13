@@ -71,4 +71,25 @@ describe("L1Writer 按学号落盘", () => {
     await w.append("edit", "code_change", {});
     expect(identityWrites()).toHaveLength(1);
   });
+
+  it("identity.json 首次写失败 → 未标记缓存，下一条事件重试且事件落盘不受阻", async () => {
+    let identityWriteCalls = 0;
+    vi.mocked(vscode.workspace.fs.writeFile).mockImplementation(async (uri: unknown) => {
+      const p = (uri as { path: string }).path;
+      if (p.endsWith(".identity.json")) {
+        identityWriteCalls += 1;
+        if (identityWriteCalls === 1) throw new Error("EACCES"); // 仅首次失败
+      }
+      // 事件文件写入照常 resolve
+    });
+    const w = makeWriter();
+    w.setIdentityProvider(() => ({ studentId: "2024001", studentName: "张三" }));
+    await w.append("edit", "code_change", {});
+    await w.append("edit", "code_change", {});
+    // 失败未标记缓存 → 第二次 append 重试了快照写入（共尝试 2 次，第二次成功）
+    expect(identityWriteCalls).toBe(2);
+    expect(identityWrites()).toHaveLength(2);
+    // 两次事件文件写入均未受快照失败阻塞
+    expect(writtenPaths().filter((p) => p.endsWith(`${today}.jsonl`))).toHaveLength(2);
+  });
 });

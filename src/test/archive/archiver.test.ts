@@ -126,4 +126,76 @@ describe("TraceArchiver.runOnce", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     archiver.dispose();
   });
+
+  it("双学号跨身份归档 → 两目录文件均上传，且各请求携带所在目录自身身份（spec §2）", async () => {
+    const ID2 = { studentId: "2024002", studentName: "李四", classId: "c2" };
+    // 自包含 seed：两学号各一目录，各一份 .identity.json + 一个 chat 文件（互不相同的事件 id）
+    vi.mocked(vscode.workspace.fs.readDirectory).mockImplementation(async (uri: unknown) => {
+      const p = (uri as { path: string }).path;
+      if (p === "/gs/trace") return [["2024001", vscode.FileType.Directory], ["2024002", vscode.FileType.Directory]];
+      if (p === "/gs/trace/2024001" || p === "/gs/trace/2024002") return [[".identity.json", vscode.FileType.File]];
+      if (p === "/gs/trace/2024001/chat" || p === "/gs/trace/2024002/chat") return [["2026-10-13.jsonl", vscode.FileType.File]];
+      return [];
+    });
+    vi.mocked(vscode.workspace.fs.readFile).mockImplementation(async (uri: unknown) => {
+      const p = (uri as { path: string }).path;
+      if (p === "/gs/trace/2024001/.identity.json") return enc.encode(JSON.stringify(IDENTITY));
+      if (p === "/gs/trace/2024002/.identity.json") return enc.encode(JSON.stringify(ID2));
+      if (p === "/gs/trace/2024001/chat/2026-10-13.jsonl") return enc.encode(line(1));
+      if (p === "/gs/trace/2024002/chat/2026-10-13.jsonl") return enc.encode(line(11) + line(12));
+      if (p.endsWith("archive-state.json")) return enc.encode("{}");
+      throw new Error("missing: " + p);
+    });
+    const fetchMock = stubFetch(() => new Response("{}", { status: 200 }));
+    const archiver = makeArchiver();
+    await archiver.runOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const bodies = (fetchMock.mock.calls as unknown as [string, RequestInit][]).map(
+      ([, init]) => JSON.parse(init.body as string)
+    );
+    // 无"当前登录"概念：每个请求体携带其所在目录的身份，而非全局身份
+    const byStudent = new Map(bodies.map((b) => [b.student_id as string, b]));
+    expect(byStudent.get("2024001")).toMatchObject({
+      student_id: "2024001", student_name: "张三", class_id: "default",
+    });
+    expect(byStudent.get("2024002")).toMatchObject({
+      student_id: "2024002", student_name: "李四", class_id: "c2",
+    });
+    expect(byStudent.get("2024002")!.events).toHaveLength(2);
+    archiver.dispose();
+  });
+
+  it("identity.json 学号与目录不符 → 该学号整体跳过，正常学号仍上传（防串档）", async () => {
+    const MISMATCH = { studentId: "9999999", studentName: "王五", classId: "default" };
+    // 自包含 seed：2024003 的 .identity.json 学号与目录名不一致；2024001 为正常对照
+    vi.mocked(vscode.workspace.fs.readDirectory).mockImplementation(async (uri: unknown) => {
+      const p = (uri as { path: string }).path;
+      if (p === "/gs/trace") return [["2024001", vscode.FileType.Directory], ["2024003", vscode.FileType.Directory]];
+      if (p === "/gs/trace/2024001" || p === "/gs/trace/2024003") return [[".identity.json", vscode.FileType.File]];
+      if (p === "/gs/trace/2024001/edit" || p === "/gs/trace/2024001/chat" || p === "/gs/trace/2024003/chat") {
+        return [["2026-10-13.jsonl", vscode.FileType.File]];
+      }
+      return [];
+    });
+    vi.mocked(vscode.workspace.fs.readFile).mockImplementation(async (uri: unknown) => {
+      const p = (uri as { path: string }).path;
+      if (p === "/gs/trace/2024001/.identity.json") return enc.encode(JSON.stringify(IDENTITY));
+      if (p === "/gs/trace/2024003/.identity.json") return enc.encode(JSON.stringify(MISMATCH));
+      if (p === "/gs/trace/2024001/edit/2026-10-13.jsonl") return enc.encode(line(1));
+      if (p === "/gs/trace/2024001/chat/2026-10-13.jsonl") return enc.encode(line(1) + line(2));
+      if (p === "/gs/trace/2024003/chat/2026-10-13.jsonl") return enc.encode(line(9));
+      if (p.endsWith("archive-state.json")) return enc.encode("{}");
+      throw new Error("missing: " + p);
+    });
+    const fetchMock = stubFetch(() => new Response("{}", { status: 200 }));
+    const archiver = makeArchiver();
+    await archiver.runOnce();
+    // 仅 2024001 的 edit+chat 两批；2024003 无任何 fetch
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const bodies = (fetchMock.mock.calls as unknown as [string, RequestInit][]).map(
+      ([, init]) => JSON.parse(init.body as string)
+    );
+    expect(bodies.every((b) => b.student_id === "2024001")).toBe(true);
+    archiver.dispose();
+  });
 });

@@ -1,5 +1,5 @@
 // src/archive/archiver.ts
-// 归档调度器：启动 10s 首扫 + 每 60 分钟一轮（spec §4.4，不做事件驱动/高频推送）。
+// 归档调度器：仅激活后延迟 10s 归档一次（spec §4.4，无定时器/事件驱动，零后台常驻）。
 // 每轮：读位点 → batcher 扫描切批 → 按批 POST /api/trace/archive → 2xx/400 推进位点。
 // 触发频率只影响服务器数据新鲜度；本地 JSONL 是事实源，断网/崩溃后下轮自动补传（spec §2/§6）。
 import * as vscode from "vscode";
@@ -11,6 +11,9 @@ import {
 } from "./batcher";
 
 const STARTUP_DELAY_MS = 10_000;
+
+/** 与服务端一致的 classId 字符集；非法值落 default，避免脏数据整批 400 拒收（spec §4.6） */
+const CLASS_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 export interface TraceArchiverDeps {
   globalStorageUri: vscode.Uri;
@@ -79,7 +82,11 @@ export function createTraceArchiver(deps: TraceArchiverDeps): TraceArchiver {
       return {
         studentId,
         studentName: p.studentName,
-        classId: typeof p.classId === "string" && p.classId ? p.classId : "default",
+        // 非法 classId（越权字符/损坏数据）按 default 上报，防止该目录全部事件被 400 拒收
+        classId:
+          typeof p.classId === "string" && p.classId && CLASS_ID_PATTERN.test(p.classId)
+            ? p.classId
+            : "default",
       };
     } catch {
       return null;
