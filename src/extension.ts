@@ -230,8 +230,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
               const pick = await vscode.window.showInformationMessage(
                 `检测到身份切换：${oldId} → ${newId}\n将先归档当前工作区 ${count} 个练习，然后清空作业目录、拉取最新作业并恢复你的历史提交。`,
                 { modal: true },
-                "继续切换",
-                "取消",
+                "继续切换"   // 隐式取消由 VS Code 模态框自动追加，显式传会出现两个取消
               );
               return pick === "继续切换";
             },

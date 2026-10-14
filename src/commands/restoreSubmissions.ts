@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { loadStudentIdentity } from "../identity/studentIdentity";
+import { pullAssignments } from "../pull/pullCommand";
 
 /** 服务端提交行（GET /api/submissions/student/:id 返回，按 submitted_at 降序） */
 interface SubmissionRow {
@@ -94,9 +95,14 @@ export async function restoreSubmissions(deps: RestoreDeps): Promise<RestoreResu
   return result;
 }
 
-/** 恢复命令（教师兜底渠道的对称功能）：从服务端拉回本人每个练习的最近一次提交 */
+/** 恢复命令（教师兜底渠道的对称功能）：先从服务端拉回本人每个练习的最近一次提交，
+ * 再补全未交过的缺失题目文件（拉取只补缺不覆盖，与一键换机同语义，结果=你的版本优先） */
 export function makeRestoreCommand(
-  deps: { teacherUrl: () => string; globalState: { get(key: string): unknown; update(key: string, value: unknown): PromiseLike<void> } },
+  deps: {
+    teacherUrl: () => string;
+    globalState: { get(key: string): unknown; update(key: string, value: unknown): PromiseLike<void> };
+    fetchImpl?: typeof fetch;   // 测试注入；缺省用全局 fetch
+  },
   vscode: typeof import("vscode")
 ) {
   return async (): Promise<void> => {
@@ -105,10 +111,12 @@ export function makeRestoreCommand(
       vscode.window.showWarningMessage("请先打开课堂文件夹（文件 → 打开文件夹），再恢复提交");
       return;
     }
+    const doFetch = deps.fetchImpl ?? fetch;
     try {
       const r = await restoreSubmissions({
         teacherUrl: deps.teacherUrl,
         getStudentId: () => loadStudentIdentity(deps.globalState).studentId,
+        fetchImpl: doFetch,
         readFile: async (rel) => {
           try {
             const buf = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(root.uri, rel));
@@ -127,8 +135,8 @@ export function makeRestoreCommand(
           const pick = await vscode.window.showWarningMessage(
             `将从服务端恢复 ${plan.length} 个作业文件（覆盖为你的最近一次提交）：\n${names}`,
             { modal: true },
-            "恢复",
-            "取消"
+            "恢复"
+            // 不传显式「取消」：VS Code 模态框会自动追加隐式取消按钮，显式传会出现两个取消
           );
           return pick === "恢复";
         },
@@ -137,10 +145,36 @@ export function makeRestoreCommand(
         vscode.window.showInformationMessage("已取消恢复");
         return;
       }
-      const parts = [`已恢复 ${r.restored.length} 个`];
+      // 补全未交过的缺失题目文件；失败不影响恢复结果，指引手动重试
+      let pulled = 0;
+      let pullError: string | null = null;
+      try {
+        const pr = await pullAssignments({
+          teacherUrl: deps.teacherUrl,
+          globalState: deps.globalState,
+          fetchImpl: doFetch,
+          fileExists: async (rel) => {
+            try { await vscode.workspace.fs.stat(vscode.Uri.joinPath(root.uri, rel)); return true; } catch { return false; }
+          },
+          writeFile: async (rel, content) => {
+            const target = vscode.Uri.joinPath(root.uri, rel);
+            await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(target, ".."));
+            await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(content));
+          },
+        });
+        pulled = pr.pulled;
+        for (const n of pr.updateNotices) vscode.window.showWarningMessage(n);
+      } catch (e) {
+        pullError = e instanceof Error ? e.message : String(e);
+      }
+      const parts = [`已恢复 ${r.restored.length} 个（你的提交）`];
       if (r.identical.length > 0) parts.push(`${r.identical.length} 个与本地一致`);
+      parts.push(`补全 ${pulled} 个（未交题目）`);
       if (r.unmapped.length > 0) parts.push(`${r.unmapped.length} 个提交找不到对应练习（题目可能已下线）`);
       vscode.window.showInformationMessage(parts.join(" · "));
+      if (pullError !== null) {
+        vscode.window.showWarningMessage(`补全未交题目失败，可执行「拉取作业」重试（${pullError}）`);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       vscode.window.showErrorMessage(
