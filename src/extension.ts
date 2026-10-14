@@ -550,8 +550,21 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
 
   try {
     context.subscriptions.push(
-      vscode.commands.registerCommand(CMD_IDS.openDataFolder, () => {
-        void vscode.commands.executeCommand("revealInExplorer", context.globalStorageUri);
+      vscode.commands.registerCommand(CMD_IDS.openDataFolder, async () => {
+        try {
+          // 目录不存在时 revealInExplorer 会静默无反应——先确保目录已创建（幂等）
+          await vscode.workspace.fs.createDirectory(context.globalStorageUri);
+          await vscode.commands.executeCommand("revealInExplorer", context.globalStorageUri);
+        } catch (err) {
+          // 兜底：用系统文件管理器打开（Windows 资源管理器 / Linux xdg-open）
+          try {
+            await vscode.env.openExternal(context.globalStorageUri);
+          } catch {
+            const msg = `无法打开数据文件夹：${err instanceof Error ? err.message : String(err)}`;
+            vscode.window.showErrorMessage(msg);
+            log(`[pylearner] ${msg}`);
+          }
+        }
       })
     );
     log("[pylearner] openDataFolder command registered");
