@@ -54,7 +54,7 @@ import { makeSubmitCommand, type SubmitCommandDeps } from "./submission/submitCo
 import { collectSubmissionTargets } from "./submission/collectTargets";
 import { makeRestoreCommand, restoreSubmissions } from "./commands/restoreSubmissions";
 import { makeRunPull, pullAssignments } from "./pull/pullCommand";
-import { confirmAndArchive, clearAndRefill } from "./identity/switchFlow";
+import { confirmAndArchive, clearAndRefill, type SwitchArchiveDeps } from "./identity/switchFlow";
 import { createAssignmentPanel } from "./views/assignmentPanel";
 import { makeRunSuccessReviewer } from "./submission/reviewRequester";
 import { buildProjectSnapshot as buildProjectSnapshotImpl } from "./submission/projectSnapshot";
@@ -223,8 +223,8 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       beforeSwitch: (oldId: string, newId: string) =>
         confirmAndArchive(
           {
-            // collectTargets 等字段是激活时动态附加的，声明类型未含 → 按 SubmitCommandDeps 断言
-            ...(submissionDeps as SubmitCommandDeps),
+            // collectTargets 等字段是激活时动态附加的（声明类型未含，运行时必已就位）→ 按 SwitchArchiveDeps 断言
+            ...(submissionDeps as unknown as SwitchArchiveDeps),
             rootFsPath: () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
             confirm: async ({ oldId, newId, count }) => {
               const pick = await vscode.window.showInformationMessage(

@@ -19,12 +19,12 @@ const projectContent = {
 
 function makeDeps(existing: Set<string>) {
   const written: string[] = [];
+  const store = new Map<string, unknown>();
   const deps: PullDeps = {
     teacherUrl: () => "http://t",
     globalState: {
-      store: new Map<string, unknown>(),
-      get(k: string) { return this.store.get(k); },
-      update(k: string, v: unknown) { this.store.set(k, v); return Promise.resolve(); },
+      get: (k: string) => store.get(k),
+      update: (k: string, v: unknown) => { store.set(k, v); return Promise.resolve(); },
     },
     fetchImpl: (async (url: string) => {
       if (url.endsWith("/api/assignments/published")) return new Response(JSON.stringify(published), { status: 200 });

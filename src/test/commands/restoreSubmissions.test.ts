@@ -37,7 +37,7 @@ function makeDeps(over: Record<string, unknown> = {}) {
       readFile: async (rel: string) => files.get(rel) ?? null,
       writeFile: async (rel: string, content: string) => { files.set(rel, content); },
       ...over,
-    } as never,
+    } as unknown as Parameters<typeof restoreSubmissions>[0],
   };
 }
 
