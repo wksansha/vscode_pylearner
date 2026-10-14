@@ -32,10 +32,11 @@ export const CONFIG_KEYS = {
   submissionEnabled: "pylearner.submission.enabled",
 } as const;
 
-// 课堂服务器缺省地址（内网 192.168.1.100）。
+// 课堂服务器地址（开发期默认本机 :3000，配合本机运行的 classroom-assistant 调试）。
+// ⚠️ 学生机房部署前必须改回内网地址 http://192.168.1.100:3000 并重新打包；
 // package.json 里 pylearner.teacher.url 的 default 与此保持一致；
-// 学生机零配置装机，特殊情况仍可用 settings.json 的 pylearner.teacher.url 覆盖。
-export const DEFAULT_TEACHER_URL = "http://192.168.1.100:3000";
+// 特殊网络环境仍可用 settings.json 的 pylearner.teacher.url 覆盖。
+export const DEFAULT_TEACHER_URL = "http://localhost:3000";
 
 // API key lives in SecretStorage (never in settings.json — Settings Sync
 // would copy it to the user's account otherwise).
