@@ -217,7 +217,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       vscode.workspace
         .getConfiguration("pylearner")
         .get<string>(CONFIG_KEYS.teacherUrl, DEFAULT_TEACHER_URL),
-    onSaved: () => { sessionGate?.reset(); updateStatusBar(); },
+    onSaved: () => { sessionGate?.markConfirmed(); },   // 保存成功 = 本人声明身份，会话内免再确认
     // 一键换机：身份页校验通过且学号变化时触发（编排逻辑见 switchFlow.ts；submissionDeps 在下方声明，调用时已初始化）
     switchFlow: {
       beforeSwitch: (oldId: string, newId: string) =>

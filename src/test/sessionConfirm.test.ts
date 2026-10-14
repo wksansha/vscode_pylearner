@@ -41,11 +41,11 @@ describe("会话身份确认门禁", () => {
     expect(calls.switch).toBe(1);
     expect(calls.prompts).toBe(0);
   });
-  it("reset 后重新弹窗（身份变更场景）", async () => {
+  it("markConfirmed（身份页保存成功）→ 本会话不再弹窗", async () => {
     const { gate, calls } = makeDeps("是我本人");
-    await gate.ensureConfirmed();
-    gate.reset();
+    gate.markConfirmed();
     expect(await gate.ensureConfirmed()).toBe(true);
-    expect(calls.prompts).toBe(2);
+    expect(calls.prompts).toBe(0);
+    expect(calls.confirmed).toBe(1);
   });
 });

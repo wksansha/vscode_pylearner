@@ -11,7 +11,7 @@ export function createSessionConfirmGate(deps: GateDeps) {
   let confirmed = false;
   return {
     isConfirmed: () => confirmed,
-    reset() { confirmed = false; },
+    markConfirmed() { confirmed = true; deps.onConfirmed(); },   // 身份页保存成功 = 本人主动声明，视为已确认
     async ensureConfirmed(): Promise<boolean> {
       const id = deps.getIdentity();
       if (!id.studentId || !id.studentName) {
