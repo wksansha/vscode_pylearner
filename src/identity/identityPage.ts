@@ -1,10 +1,17 @@
 import * as vscode from "vscode";
-import { saveStudentIdentity, type KeyValueStore } from "./studentIdentity";
+import { saveStudentIdentity, loadStudentIdentity, type KeyValueStore } from "./studentIdentity";
 
 export interface IdentityPageDeps {
   teacherUrl: () => string;
   fetchImpl?: typeof fetch;
   onSaved: (identity: { studentId: string; studentName: string }) => void;
+  /** 一键换机（可选）：旧身份存在且学号变化时启用。
+   * beforeSwitch = 确认 + 用旧身份归档当前工作区（false = 中止，不保存新身份）；
+   * afterSwitch = 保存新身份后清空作业目录、拉取最新作业并恢复本人历史提交（见 switchFlow.ts）。 */
+  switchFlow?: {
+    beforeSwitch: (oldId: string, newId: string) => Promise<boolean>;
+    afterSwitch: () => Promise<void>;
+  };
 }
 
 /** A25 错误码→文案（与 server validateIdentity 的 message 逐字一致） */
@@ -39,7 +46,21 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
       const body = await res.json() as { ok?: boolean; studentName?: string; code?: string };
       if (res.ok && body.ok) {
         const identity = { studentId: msg.studentId.trim(), studentName: body.studentName ?? msg.studentName.trim() };
-        await saveStudentIdentity(context.globalState, identity);   // A25：校验通过才保存（名册规范姓名）
+        // 一键换机：学号变化时先归档（旧身份），归档成功才保存新身份（时序见 switchFlow.ts）
+        const flow = deps.switchFlow;
+        const oldId = loadStudentIdentity(context.globalState).studentId;
+        const isSwitch = flow !== undefined && oldId !== null && oldId !== identity.studentId;
+        if (isSwitch && flow) {
+          const ok = await flow.beforeSwitch(oldId, identity.studentId);
+          if (!ok) {
+            currentPanel?.webview.postMessage({ type: "result", ok: false, message: "已取消或归档未完成，身份未切换，工作区已保留" });
+            return;
+          }
+          await saveStudentIdentity(context.globalState, identity);
+          await flow.afterSwitch();
+        } else {
+          await saveStudentIdentity(context.globalState, identity);   // A25：校验通过才保存（名册规范姓名）
+        }
         currentPanel?.webview.postMessage({ type: "result", ok: true, message: `✅ 身份已保存：${identity.studentId} ${identity.studentName}` });
         setTimeout(() => currentPanel?.dispose(), 1_200);
         deps.onSaved(identity);

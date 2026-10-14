@@ -50,10 +50,11 @@ import { createSessionConfirmGate } from "./identity/sessionConfirm";
 import {
   type SubmissionDeps,
 } from "./submission/submissionReporter";
-import { makeSubmitCommand } from "./submission/submitCommand";
+import { makeSubmitCommand, type SubmitCommandDeps } from "./submission/submitCommand";
 import { collectSubmissionTargets } from "./submission/collectTargets";
-import { makeRestoreCommand } from "./commands/restoreSubmissions";
-import { makeRunPull } from "./pull/pullCommand";
+import { makeRestoreCommand, restoreSubmissions } from "./commands/restoreSubmissions";
+import { makeRunPull, pullAssignments } from "./pull/pullCommand";
+import { confirmAndArchive, clearAndRefill } from "./identity/switchFlow";
 import { createAssignmentPanel } from "./views/assignmentPanel";
 import { makeRunSuccessReviewer } from "./submission/reviewRequester";
 import { buildProjectSnapshot as buildProjectSnapshotImpl } from "./submission/projectSnapshot";
@@ -217,6 +218,83 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         .getConfiguration("pylearner")
         .get<string>(CONFIG_KEYS.teacherUrl, "http://localhost:3000"),
     onSaved: () => { sessionGate?.reset(); updateStatusBar(); },
+    // 一键换机：身份页校验通过且学号变化时触发（编排逻辑见 switchFlow.ts；submissionDeps 在下方声明，调用时已初始化）
+    switchFlow: {
+      beforeSwitch: (oldId: string, newId: string) =>
+        confirmAndArchive(
+          {
+            // collectTargets 等字段是激活时动态附加的，声明类型未含 → 按 SubmitCommandDeps 断言
+            ...(submissionDeps as SubmitCommandDeps),
+            rootFsPath: () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+            confirm: async ({ oldId, newId, count }) => {
+              const pick = await vscode.window.showInformationMessage(
+                `检测到身份切换：${oldId} → ${newId}\n将先归档当前工作区 ${count} 个练习，然后清空作业目录、拉取最新作业并恢复你的历史提交。`,
+                { modal: true },
+                "继续切换",
+                "取消",
+              );
+              return pick === "继续切换";
+            },
+            notify: (m: string, warn: boolean) =>
+              void (warn ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)),
+          },
+          oldId,
+          newId,
+        ),
+      afterSwitch: () =>
+        clearAndRefill({
+          listEntries: async () => {
+            const root = vscode.workspace.workspaceFolders?.[0];
+            if (!root) return null;
+            const entries = await vscode.workspace.fs.readDirectory(root.uri);
+            return entries.map(([name, type]) => [name, type === vscode.FileType.Directory] as [string, boolean]);
+          },
+          deleteDir: async (name: string) => {
+            const root = vscode.workspace.workspaceFolders?.[0];
+            if (!root) return;
+            await vscode.workspace.fs.delete(vscode.Uri.joinPath(root.uri, name), { recursive: true });
+          },
+          pull: async () => {
+            const root = vscode.workspace.workspaceFolders?.[0];
+            if (!root) throw new Error("请先打开课堂文件夹");
+            return pullAssignments({
+              teacherUrl: identityDeps.teacherUrl,
+              globalState: context.globalState,
+              fileExists: async (rel) => {
+                try { await vscode.workspace.fs.stat(vscode.Uri.joinPath(root.uri, rel)); return true; } catch { return false; }
+              },
+              writeFile: async (rel, content) => {
+                const target = vscode.Uri.joinPath(root.uri, rel);
+                await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(target, ".."));
+                await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(content));
+              },
+            });
+          },
+          restore: async () => {
+            const root = vscode.workspace.workspaceFolders?.[0];
+            if (!root) throw new Error("请先打开课堂文件夹");
+            const r = await restoreSubmissions({
+              teacherUrl: identityDeps.teacherUrl,
+              getStudentId: () => loadStudentIdentity(context.globalState).studentId,
+              readFile: async (rel) => {
+                try {
+                  return new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(root.uri, rel)));
+                } catch {
+                  return null;
+                }
+              },
+              writeFile: async (rel, content) => {
+                const target = vscode.Uri.joinPath(root.uri, rel);
+                await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(target, ".."));
+                await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(content));
+              },
+            });
+            return { restored: r.restored.length };
+          },
+          notify: (m: string, warn: boolean) =>
+            void (warn ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)),
+        }),
+    },
   };
   // —— L1 全量归档（spec：docs/superpowers/specs/2026-10-13-l1-trace-archive-design.md）——
   // 激活后 10s 归档一次（无定时器）；复用 teacher.url / teacher.enabled；失败静默下次激活补传

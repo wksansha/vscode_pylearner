@@ -16,6 +16,28 @@ export interface SubmitCommandDeps extends SubmissionDeps {
   readFile?: (fsPath: string) => Promise<string | null>;
 }
 
+/** 归档结果汇总（供提交命令展示与切换身份流程编排） */
+export interface ArchiveSummary {
+  submitted: number;
+  skipped: number;
+  failed: number;
+  failedLabels: string[];
+  identityMissing: boolean;
+}
+
+/** 归档循环核心（无 UI）：逐目标调用 submitCode；identity-missing 立即停止。供提交命令与切换身份流程共用 */
+export async function archiveWorkspaceTargets(deps: SubmissionDeps, targets: SubmissionTarget[]): Promise<ArchiveSummary> {
+  const summary: ArchiveSummary = { submitted: 0, skipped: 0, failed: 0, failedLabels: [], identityMissing: false };
+  for (const target of targets) {
+    const outcome = await submitCode(deps, { filePath: target.filePath, content: target.content, source: "manual" });
+    if (outcome === "submitted") summary.submitted++;
+    else if (outcome === "skipped") summary.skipped++;
+    else if (outcome === "identity-missing") { summary.identityMissing = true; return summary; }   // 身份缺失 → 停止
+    else { summary.failed++; summary.failedLabels.push(target.label); }                            // error / not-exercise
+  }
+  return summary;
+}
+
 /** 提交命令（V2.0）：一键归档工作区全部练习（week-XX），幂等跳过已交；F5 评审链不变。缺 collectTargets 时回退单文件路径（A3 兜底） */
 export function makeSubmitCommand(deps: SubmitCommandDeps, vscode: typeof import("vscode")) {
   return async (): Promise<void> => {
@@ -31,31 +53,18 @@ export function makeSubmitCommand(deps: SubmitCommandDeps, vscode: typeof import
       vscode.window.showInformationMessage("未找到课堂练习（week-XX 目录）");
       return;
     }
-    let submitted = 0;
-    let skipped = 0;
-    let failed = 0;
-    let identityMissing = false;
-    const failedLabels: string[] = [];
-    await vscode.window.withProgress(
+    const summary = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: "正在提交作业…" },
-      async () => {
-        for (const target of targets) {
-          const outcome = await submitCode(deps, { filePath: target.filePath, content: target.content, source: "manual" });
-          if (outcome === "submitted") submitted++;
-          else if (outcome === "skipped") skipped++;
-          else if (outcome === "identity-missing") { identityMissing = true; return; }   // 身份缺失 → 停止
-          else { failed++; failedLabels.push(target.label); }                            // error / not-exercise
-        }
-      },
+      () => archiveWorkspaceTargets(deps, targets),
     );
-    if (identityMissing) {
+    if (summary.identityMissing) {
       deps.onIdentityMissing();
       vscode.window.showWarningMessage("请先在身份页设置学号与姓名");
       return;
     }
-    let msg = `✅ 提交完成：新归档 ${submitted} · 已是最新 ${skipped}`;
-    if (failed > 0) msg += ` · 失败 ${failed}：${failedLabels.join("、")}`;
-    if (failed > 0) vscode.window.showWarningMessage(msg);
+    let msg = `✅ 提交完成：新归档 ${summary.submitted} · 已是最新 ${summary.skipped}`;
+    if (summary.failed > 0) msg += ` · 失败 ${summary.failed}：${summary.failedLabels.join("、")}`;
+    if (summary.failed > 0) vscode.window.showWarningMessage(msg);
     else vscode.window.showInformationMessage(msg);
   };
 }
