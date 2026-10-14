@@ -30,7 +30,7 @@ function setupStartupLogger() {
 setupStartupLogger();
 
 import * as vscode from "vscode";
-import { CMD_IDS, CONFIG_KEYS, SECRET_KEYS, VIEW_IDS } from "./constants";
+import { CMD_IDS, CONFIG_KEYS, DEFAULT_TEACHER_URL, SECRET_KEYS, VIEW_IDS } from "./constants";
 import { L1Writer } from "./storage/l1Writer";
 import { ChatStore } from "./storage/chatStore";
 import { LlmRouter } from "./llm/router";
@@ -155,8 +155,8 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     const enabled = cfg.get<boolean>(CONFIG_KEYS.teacherEnabled, true);
     if (enabled) {
       const teacherUrl =
-        cfg.get<string>(CONFIG_KEYS.teacherUrl, "http://localhost:3000") ||
-        "http://localhost:3000";
+        cfg.get<string>(CONFIG_KEYS.teacherUrl, DEFAULT_TEACHER_URL) ||
+        DEFAULT_TEACHER_URL;
       currentReporter = createTeacherReporter({ teacherUrl, getIdentity });
       l1Writer.setTeacherReporter(currentReporter);
       log("[pylearner] teacher reporter enabled");
@@ -216,7 +216,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     teacherUrl: () =>
       vscode.workspace
         .getConfiguration("pylearner")
-        .get<string>(CONFIG_KEYS.teacherUrl, "http://localhost:3000"),
+        .get<string>(CONFIG_KEYS.teacherUrl, DEFAULT_TEACHER_URL),
     onSaved: () => { sessionGate?.reset(); updateStatusBar(); },
     // 一键换机：身份页校验通过且学号变化时触发（编排逻辑见 switchFlow.ts；submissionDeps 在下方声明，调用时已初始化）
     switchFlow: {
