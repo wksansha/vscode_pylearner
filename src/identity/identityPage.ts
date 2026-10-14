@@ -1,5 +1,14 @@
 import * as vscode from "vscode";
 import { saveStudentIdentity, loadStudentIdentity, type KeyValueStore } from "./studentIdentity";
+import { studentDirName, UNKNOWN_DIR } from "../archive/identity";
+
+/** 离线兜底前置检查：学号必须能作为本地目录名/服务器路径段，否则事件将落 unknown/ 永不归档（spec §4.1） */
+export function localIdErrorText(studentId: string): string | undefined {
+  if (studentDirName(studentId) === UNKNOWN_DIR) {
+    return "学号仅允许字母、数字、中划线、下划线（≤32 位，不可为保留字），请修改后重试";
+  }
+  return undefined;
+}
 
 export interface IdentityPageDeps {
   teacherUrl: () => string;
@@ -36,16 +45,24 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
   currentPanel.webview.html = IDENTITY_HTML;
   currentPanel.webview.onDidReceiveMessage(async (msg: { type: string; studentId?: string; studentName?: string }) => {
     if (msg.type !== "submit" || !msg.studentId?.trim() || !msg.studentName?.trim()) return;
+    const studentId = msg.studentId.trim();
+    const studentName = msg.studentName.trim();
+    // 本地把关学号合法性：非法学号即使保存也只会落 unknown/（归不到人），直接拒绝
+    const localErr = localIdErrorText(studentId);
+    if (localErr) {
+      currentPanel?.webview.postMessage({ type: "result", ok: false, message: localErr });
+      return;
+    }
     const doFetch = deps.fetchImpl ?? fetch;
     try {
       const res = await doFetch(`${deps.teacherUrl()}/api/identity/validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ studentId: msg.studentId.trim(), studentName: msg.studentName.trim() }),
+        body: JSON.stringify({ studentId, studentName }),
       });
       const body = await res.json() as { ok?: boolean; studentName?: string; code?: string };
       if (res.ok && body.ok) {
-        const identity = { studentId: msg.studentId.trim(), studentName: body.studentName ?? msg.studentName.trim() };
+        const identity = { studentId, studentName: body.studentName ?? studentName };
         // 一键换机：学号变化时先归档（旧身份），归档成功才保存新身份（时序见 switchFlow.ts）
         const flow = deps.switchFlow;
         const oldId = loadStudentIdentity(context.globalState).studentId;
@@ -68,7 +85,16 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
         currentPanel?.webview.postMessage({ type: "result", ok: false, message: identityErrorText(body.code ?? "") });
       }
     } catch {
-      currentPanel?.webview.postMessage({ type: "result", ok: false, message: "无法连接教师端服务器，请检查网络后重试" });
+      // 离线兜底（教师端不可达）：本地保存身份，事件照常落学号目录。
+      // 联网后激活时的名册复核自动自愈——不符则重新弹身份页要求修正（A25 语义仅在线时强制）。
+      await saveStudentIdentity(context.globalState, { studentId, studentName });
+      currentPanel?.webview.postMessage({
+        type: "result",
+        ok: true,
+        message: `⚠️ 服务器暂不可达，已离线保存：${studentId} ${studentName}。联网后将自动与名册核对。`,
+      });
+      setTimeout(() => currentPanel?.dispose(), 2_500);
+      deps.onSaved({ studentId, studentName });
     }
   });
   currentPanel.onDidDispose(() => { currentPanel = undefined; });
@@ -99,7 +125,7 @@ const IDENTITY_HTML = `<!DOCTYPE html>
   .err{color:#dc2626}.ok{color:#16a34a}
 </style></head><body>
 <h2>课堂助手 · 身份设置</h2>
-<p>请输入学号与姓名（用于课堂监控与作业提交，须经教师端名册校验）</p>
+<p>请输入学号与姓名（用于课堂监控与作业提交；教师端在线时经名册校验，不可达时可离线保存、联网后自动核对）</p>
 <input id="sid" placeholder="学号，如 20260001" />
 <input id="sname" placeholder="姓名，如 张三" />
 <button onclick="submit()">提交校验</button>
