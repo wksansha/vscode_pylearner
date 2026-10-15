@@ -9,7 +9,7 @@ export const CMD_IDS = {
   setStudentIdentity: "pylearner.setStudentIdentity",
   submitExercise: "pylearner.submitExercise",
   pullAssignments: "pylearner.pullAssignments",
-  restoreSubmissions: "pylearner.restoreSubmissions",
+  syncAssignments: "pylearner.syncAssignments",
   openDataFolder: "pylearner.openDataFolder",
 } as const;
 
@@ -30,6 +30,7 @@ export const CONFIG_KEYS = {
   teacherUrl: "pylearner.teacher.url",
   teacherEnabled: "pylearner.teacher.enabled",
   submissionEnabled: "pylearner.submission.enabled",
+  gitRepoUrl: "pylearner.gitRepoUrl",
 } as const;
 
 // 课堂服务器地址（开发期默认本机 :3000，配合本机运行的 classroom-assistant 调试）。
@@ -42,6 +43,7 @@ export const DEFAULT_TEACHER_URL = "http://localhost:3000";
 // would copy it to the user's account otherwise).
 export const SECRET_KEYS = {
   llmApiKey: "pylearner.llm.apiKey",
+  gitToken: "pylearner.git.token",   // 学生专属 Gitea token（身份校验响应下发，spec 2.2）
   studentId: "pylearner.student.id",
   studentName: "pylearner.student.name",
   classId: "pylearner.student.classId",

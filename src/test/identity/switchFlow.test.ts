@@ -1,196 +1,292 @@
-import crypto from "node:crypto";
 import { describe, it, expect } from "vitest";
 import {
-  weekDirsToRemove,
-  confirmAndArchive,
-  clearAndRefill,
-  type SwitchArchiveDeps,
-  type PostSwitchDeps,
+  archiveBeforeSwitch,
+  refillAfterSwitch,
+  type BeforeSwitchDeps,
+  type AfterSwitchDeps,
+  type SubmitNotifyPayload,
 } from "../../identity/switchFlow";
-import type { SubmissionTarget } from "../../submission/collectTargets";
+import { createGitClient, type ExecFn } from "../../git/gitClient";
 
-// ── 一键换机：阶段一 confirmAndArchive（确认 + 旧身份归档）────────────────
-const ID_A = "01234567-89ab-cdef-0123-456789abcdef";
-const ID_B = "11111111-2222-3333-4444-555555555555";
+// ── 一键换机：recorder 模式，fake exec 记录调用序列并按参数路由返回值 ──────
 
-const t1: SubmissionTarget = { label: "week-02/01-hello.py", filePath: "C:\\ws\\week-02\\01-hello.py", content: `# exercise-id: ${ID_A}\nprint(1)` };
-const t2: SubmissionTarget = { label: "week-03/weather-app", filePath: "C:\\ws\\week-03\\weather-app\\main.py", content: `# exercise-id: ${ID_B}\n# entry` };
+interface Route {
+  match: (args: string[]) => boolean;
+  stdout?: string;
+  fail?: { stdout?: string; stderr?: string; message?: string };
+}
+
+function makeRecorder(routes: Route[]) {
+  const calls: string[][] = [];
+  const exec: ExecFn = async (_file, args) => {
+    calls.push([...args]);
+    const route = routes.find((r) => r.match(args));
+    if (!route) throw new Error(`no route for: git ${args.join(" ")}`);
+    if (route.fail) {
+      const err = new Error(route.fail.message ?? "git failed") as Error & { stdout: string; stderr: string };
+      err.stdout = route.fail.stdout ?? "";
+      err.stderr = route.fail.stderr ?? "";
+      throw err;
+    }
+    return { stdout: route.stdout ?? "", stderr: "" };
+  };
+  return { calls, git: createGitClient("C:/ws", exec) };
+}
+
+const cmd = (s: string) => (args: string[]) => args.join(" ") === s;
+const starts = (s: string) => (args: string[]) => args.join(" ").startsWith(s);
+const joined = (calls: string[][]) => calls.map((c) => c.join(" "));
 
 type Msg = { warn: boolean; text: string };
 
-function makeSwitchDeps(opts?: {
-  targets?: SubmissionTarget[];
-  cancel?: boolean;
-  fetchStatus?: number;
-  root?: string;
-  identity?: { studentId: string | null; studentName: string | null };
-}) {
-  const messages: Msg[] = [];
-  const posts: unknown[] = [];
-  let hashes: Record<string, string> = {};
-  let identityMissingCalls = 0;
-  const deps: SwitchArchiveDeps = {
-    teacherUrl: () => "http://t",
-    getIdentity: () => opts?.identity ?? { studentId: "2025001", studentName: "张三" },
-    onIdentityMissing: () => { identityMissingCalls++; },
-    globalState: {
-      get: (key: string) => (key === "pylearner.submission.lastHashes" ? hashes : undefined),
-      update: async (key: string, value: unknown) => {
-        if (key === "pylearner.submission.lastHashes") hashes = value as Record<string, string>;
-      },
+/** 旧学生 2025001 归档（submitAll）所需路由；可注入失败点 */
+function archiveRoutes(opts?: { branch?: string; status?: string; nothingToCommit?: boolean; rebaseFail?: boolean; pushFail?: boolean }) {
+  return [
+    { match: cmd("rev-parse --abbrev-ref HEAD"), stdout: (opts?.branch ?? "student-2025001") + "\n" },
+    { match: cmd("status --porcelain"), stdout: opts?.status ?? "M week-01/a.py\n?? notes.md\n" },
+    { match: cmd("add -A") },
+    {
+      match: starts("commit -m submit"),
+      fail: opts?.nothingToCommit
+        ? { stdout: "On branch student-2025001\nnothing to commit, working tree clean", message: "git failed" }
+        : undefined,
     },
-    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
-      posts.push(JSON.parse(String(init?.body)));
-      return new Response("{}", { status: opts?.fetchStatus ?? 200 });
-    }) as unknown as typeof fetch,
-    rootFsPath: () => (opts && "root" in opts ? opts.root : "C:\\ws"),   // 显式传 undefined = 无工作区
-    collectTargets: async () => opts?.targets ?? [t1, t2],
-    confirm: async () => !opts?.cancel,
-    notify: (text, warn) => { messages.push({ text, warn }); },
-  };
-  return { deps, messages, posts, identityMissingCalls: () => identityMissingCalls };
+    { match: cmd("fetch origin") },
+    { match: cmd("rebase origin/student-2025001"), fail: opts?.rebaseFail ? { stderr: "CONFLICT (content)" } : undefined },
+    { match: cmd("rebase --abort") },
+    { match: cmd("rev-parse HEAD"), stdout: "feedc0de\n" },
+    { match: cmd("rev-parse origin/student-2025001"), stdout: "remote123\n" },
+    { match: cmd("diff --name-only remote123 HEAD"), stdout: "week-01/a.py\nnotes.md\n" },
+    { match: starts("push https://"), fail: opts?.pushFail ? { stderr: "connection refused" } : undefined },
+  ];
 }
 
-describe("confirmAndArchive（阶段一：确认 + 旧身份归档）", () => {
-  it("确认 + 归档成功 → true，逐目标 POST，通知归档计数", async () => {
-    const { deps, messages, posts } = makeSwitchDeps();
-    await expect(confirmAndArchive(deps, "2025001", "2025002")).resolves.toBe(true);
-    expect(posts).toHaveLength(2);
-    expect(posts[0]).toMatchObject({ studentId: "2025001" });   // 归档归属旧身份
-    expect(messages[0]).toEqual({ warn: false, text: "已用 2025001 归档 2 个练习" });
+/** 新学生 2025002 分支重建与同步所需路由 */
+function refillRoutes(opts?: { branchMissing?: boolean; pullFail?: boolean; newFiles?: string; newOnlyFail?: boolean }) {
+  return [
+    { match: cmd("fetch origin") },
+    { match: cmd("branch --list student-2025002") },
+    { match: cmd("rev-parse --verify origin/student-2025002"), stdout: opts?.branchMissing ? "" : "a1b2c3d\n" },
+    { match: starts("branch student-2025002 origin/") },
+    { match: cmd("checkout student-2025002") },
+    { match: cmd("clean -fdX") },
+    { match: cmd("pull origin student-2025002"), fail: opts?.pullFail ? { stderr: "CONFLICT" } : undefined },
+    { match: cmd("rebase origin/student-2025002"), fail: opts?.newOnlyFail ? { stderr: "CONFLICT" } : undefined },
+    { match: cmd("diff --diff-filter=A --name-only HEAD origin/main"), stdout: opts?.newFiles ?? "" },
+    { match: starts("checkout origin/main -- ") },
+    { match: starts("commit -m pull:") },
+  ];
+}
+
+function makeBeforeDeps(git: ReturnType<typeof createGitClient>, opts?: {
+  cancel?: boolean;
+  confirmDelete?: (n: number) => Promise<boolean>;
+}) {
+  const messages: Msg[] = [];
+  const notified: SubmitNotifyPayload[] = [];
+  const confirms: { oldId: string; newId: string; count: number }[] = [];
+  const deps: BeforeSwitchDeps = {
+    git,
+    studentId: "2025001",
+    studentName: "张三",
+    remoteWithToken: () => "https://oauth2:tok@gitea.example/org/hw.git",
+    confirmDelete: opts?.confirmDelete,
+    notifyServer: async (p) => { notified.push(p); },
+    confirm: async (info) => { confirms.push(info); return !opts?.cancel; },
+    notify: (text, warn) => { messages.push({ text, warn }); },
+  };
+  return { deps, messages, notified, confirms };
+}
+
+function makeAfterDeps(git: ReturnType<typeof createGitClient>) {
+  const messages: Msg[] = [];
+  const deps: AfterSwitchDeps = {
+    git,
+    newStudentId: "2025002",
+    notify: (text, warn) => { messages.push({ text, warn }); },
+  };
+  return { deps, messages };
+}
+
+// ── 阶段一 archiveBeforeSwitch（确认 + 旧身份提交归档）────────────────────
+describe("archiveBeforeSwitch（阶段一：确认 + submitAll 归档）", () => {
+  it("确认 + 归档成功 → true，push 推旧分支、notifyServer 收到载荷、成功通知", async () => {
+    const rec = makeRecorder(archiveRoutes());
+    const { deps, messages, notified, confirms } = makeBeforeDeps(rec.git);
+
+    await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(true);
+
+    expect(confirms).toEqual([{ oldId: "2025001", newId: "2025002", count: 2 }]);
+    expect(joined(rec.calls)).toContain("push https://oauth2:tok@gitea.example/org/hw.git HEAD:refs/heads/student-2025001");
+    expect(notified).toEqual([
+      { studentId: "2025001", studentName: "张三", commitHash: "feedc0de", files: ["week-01/a.py", "notes.md"], pushedAt: expect.any(Number) },
+    ]);
+    expect(messages).toEqual([{ warn: false, text: "已用 2025001 提交归档当前工作区" }]);
   });
 
-  it("归档有失败 → false + 警告（身份未切换，可重试）", async () => {
-    const { deps, messages, posts } = makeSwitchDeps({ fetchStatus: 500 });
-    await expect(confirmAndArchive(deps, "2025001", "2025002")).resolves.toBe(false);
-    expect(posts).toHaveLength(2);
-    expect(messages[0].warn).toBe(true);
-    expect(messages[0].text).toContain("归档未完成");
-    expect(messages[0].text).toContain("2 个失败");
-    expect(messages[0].text).toContain(t1.label);
+  it("工作区无变更（nothing to commit）→ true + 提示无需归档", async () => {
+    const rec = makeRecorder(archiveRoutes({ nothingToCommit: true }));
+    const { deps, messages, notified } = makeBeforeDeps(rec.git);
+
+    await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(true);
+    expect(notified).toHaveLength(0);
+    expect(messages).toEqual([{ warn: false, text: "工作区无变更，2025001 无需归档" }]);
   });
 
-  it("用户取消确认 → false，不发起任何归档请求", async () => {
-    const { deps, messages, posts } = makeSwitchDeps({ cancel: true });
-    await expect(confirmAndArchive(deps, "2025001", "2025002")).resolves.toBe(false);
-    expect(posts).toHaveLength(0);
+  it("用户取消确认 → false，不触发任何归档动作", async () => {
+    const rec = makeRecorder(archiveRoutes());
+    const { deps, messages, notified } = makeBeforeDeps(rec.git, { cancel: true });
+
+    await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(false);
+    expect(joined(rec.calls)).toEqual(["status --porcelain"]);   // 只探测变更数
+    expect(notified).toHaveLength(0);
     expect(messages).toHaveLength(0);
   });
 
-  it("无工作区 → false + 警告，不触发收集", async () => {
-    const { deps, messages, posts } = makeSwitchDeps({ root: undefined });
-    await expect(confirmAndArchive(deps, "2025001", "2025002")).resolves.toBe(false);
-    expect(posts).toHaveLength(0);
+  it("分支不匹配（当前在 main）→ false + 警告（归档中止，身份未切换）", async () => {
+    const rec = makeRecorder(archiveRoutes({ branch: "main" }));
+    const { deps, messages } = makeBeforeDeps(rec.git);
+
+    await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(false);
     expect(messages[0].warn).toBe(true);
-    expect(messages[0].text).toContain("请先打开课堂文件夹");
+    expect(messages[0].text).toContain("归档中止");
+    expect(messages[0].text).toContain("student-2025001");
   });
 
-  it("空工作区（0 练习）+ 确认 → true（新机器首次切换场景）", async () => {
-    const { deps, messages } = makeSwitchDeps({ targets: [] });
-    await expect(confirmAndArchive(deps, "2025001", "2025002")).resolves.toBe(true);
-    expect(messages[0]).toEqual({ warn: false, text: "已用 2025001 归档 0 个练习" });
+  it("push 失败 → false + 警告（防代码丢失，中止切换）", async () => {
+    const rec = makeRecorder(archiveRoutes({ pushFail: true }));
+    const { deps, messages, notified } = makeBeforeDeps(rec.git);
+
+    await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(false);
+    expect(notified).toHaveLength(0);
+    expect(messages[0].warn).toBe(true);
+    expect(messages[0].text).toContain("推送失败");
   });
 
-  it("identity-missing → false + 警告，不产生汇总", async () => {
-    const { deps, messages, posts, identityMissingCalls } = makeSwitchDeps({ identity: { studentId: null, studentName: null } });
-    await expect(confirmAndArchive(deps, "2025001", "2025002")).resolves.toBe(false);
-    expect(identityMissingCalls()).toBeGreaterThanOrEqual(1);
-    expect(posts).toHaveLength(0);
+  it("rebase 冲突 → false + 警告，且以 rebase --abort 收尾", async () => {
+    const rec = makeRecorder(archiveRoutes({ rebaseFail: true }));
+    const { deps, messages } = makeBeforeDeps(rec.git);
+
+    await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(false);
+    expect(joined(rec.calls)[joined(rec.calls).length - 1]).toBe("rebase --abort");
     expect(messages[0].warn).toBe(true);
-    expect(messages[0].text).toContain("身份信息缺失");
+    expect(messages[0].text).toContain("冲突");
+  });
+
+  it("删除确认被取消 → false，不 add 不提示", async () => {
+    const rec = makeRecorder(archiveRoutes({ status: "M week-01/a.py\nD  week-02/old.py\n" }));
+    const { deps, messages, notified } = makeBeforeDeps(rec.git, { confirmDelete: async () => false });
+
+    await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(false);
+    expect(joined(rec.calls)).not.toContain("add -A");
+    expect(notified).toHaveLength(0);
+    expect(messages).toHaveLength(0);
+  });
+
+  it("git 异常（如非仓库）→ false + 警告（不向调用方抛出）", async () => {
+    const rec = makeRecorder([]);   // 无路由 = git 全部失败
+    const { deps, messages } = makeBeforeDeps(rec.git);
+
+    await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(false);
+    expect(messages[0].warn).toBe(true);
+    expect(messages[0].text).toContain("归档失败");
   });
 });
 
-// ── weekDirsToRemove（清空范围识别）──────────────────────────────────────
-describe("weekDirsToRemove（清空范围：只认一级 week-* 目录）", () => {
-  it("宽容非补零；忽略文件、非 week 目录与伪周名", () => {
-    expect(weekDirsToRemove([
-      ["week-02", true], ["week-5", true], ["week-10", true],
-      [".vscode", true], ["notes.txt", false], ["weekly", true], ["week-", true],
-    ])).toEqual(["week-02", "week-5", "week-10"]);
-  });
-});
+// ── 阶段二 refillAfterSwitch（checkout 新分支 → 清理 → 同步）──────────────
+describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNewOnly）", () => {
+  it("正常链路：远端分支存在 + main 有新题 → 严格按序执行并汇总", async () => {
+    const rec = makeRecorder(refillRoutes({ newFiles: "week-04/new.py\n" }));
+    const { deps, messages } = makeAfterDeps(rec.git);
 
-// ── clearAndRefill（阶段二：清空 → 拉取 → 恢复）──────────────────────────
-function makePostDeps(opts?: {
-  entries?: [string, boolean][] | null;
-  failDelete?: boolean;
-  failPull?: boolean;
-  failRestore?: boolean;
-}) {
-  const messages: Msg[] = [];
-  const calls: string[] = [];
-  const deleted: string[] = [];
-  const deps: PostSwitchDeps = {
-    listEntries: async () => {
-      calls.push("list");
-      return opts?.entries !== undefined
-        ? opts.entries
-        : [["week-02", true], ["week-5", true], [".vscode", true], ["notes.txt", false]];
-    },
-    deleteDir: async (name) => {
-      calls.push(`delete:${name}`);
-      if (opts?.failDelete) throw new Error("disk locked");
-      deleted.push(name);
-    },
-    pull: async () => {
-      calls.push("pull");
-      if (opts?.failPull) throw new Error("network down");
-      return { pulled: 3 };
-    },
-    restore: async () => {
-      calls.push("restore");
-      if (opts?.failRestore) throw new Error("server 500");
-      return { restored: 2 };
-    },
-    notify: (text, warn) => { messages.push({ text, warn }); },
-  };
-  return { deps, messages, calls, deleted };
-}
+    await refillAfterSwitch(deps);
 
-describe("clearAndRefill（阶段二：清空 → 拉取 → 恢复）", () => {
-  it("正常链路：只删 week-* 目录，严格按顺序执行并汇总", async () => {
-    const { deps, messages, calls, deleted } = makePostDeps();
-    await clearAndRefill(deps);
-    expect(deleted).toEqual(["week-02", "week-5"]);
-    expect(calls).toEqual(["list", "delete:week-02", "delete:week-5", "pull", "restore"]);
-    expect(messages).toEqual([
-      { warn: false, text: "已切换工作区：清空 2 个周目录 · 拉取 3 个文件 · 恢复 2 个提交" },
+    expect(joined(rec.calls)).toEqual([
+      "fetch origin",
+      "branch --list student-2025002",
+      "rev-parse --verify origin/student-2025002",
+      "branch student-2025002 origin/student-2025002",
+      "checkout student-2025002",
+      "clean -fdX",
+      "rev-parse --verify origin/student-2025002",
+      "pull origin student-2025002",
+      "fetch origin",
+      "rebase origin/student-2025002",
+      "diff --diff-filter=A --name-only HEAD origin/main",
+      "checkout origin/main -- week-04/new.py",
+      "commit -m pull: 1 new file(s) from main",
     ]);
+    expect(messages).toEqual([{ warn: false, text: "已切换工作区到 2025002：拉取新作业 1 个文件" }]);
   });
 
-  it("清空失败 → 警告并完全停止（不拉取不恢复，防误删后续动作）", async () => {
-    const { deps, messages, calls } = makePostDeps({ failDelete: true });
-    await clearAndRefill(deps);
-    expect(calls).toEqual(["list", "delete:week-02"]);   // 删除抛错即停
+  it("新学生首用（远端无分支）→ 自 origin/main 建分支、跳过 pull、仍同步新增", async () => {
+    const rec = makeRecorder(refillRoutes({ branchMissing: true }));
+    const { deps, messages } = makeAfterDeps(rec.git);
+
+    await refillAfterSwitch(deps);
+
+    const seq = joined(rec.calls);
+    expect(seq).toContain("branch student-2025002 origin/main");
+    expect(seq).not.toContain("pull origin student-2025002");
+    expect(messages).toEqual([{ warn: false, text: "已切换工作区到 2025002（暂无新作业）" }]);
+  });
+
+  it("checkout 新分支失败（fetch 断网）→ 警告并停止（不动工作区）", async () => {
+    const rec = makeRecorder([{ match: cmd("fetch origin"), fail: { stderr: "network down" } }]);
+    const { deps, messages } = makeAfterDeps(rec.git);
+
+    await refillAfterSwitch(deps);
+
+    expect(joined(rec.calls)).toEqual(["fetch origin"]);
     expect(messages).toHaveLength(1);
     expect(messages[0].warn).toBe(true);
-    expect(messages[0].text).toContain("清空旧作业目录失败");
+    expect(messages[0].text).toContain("分支失败");
   });
 
-  it("拉取失败 → 警告并停止（不恢复），不产生汇总", async () => {
-    const { deps, messages, calls } = makePostDeps({ failPull: true });
-    await clearAndRefill(deps);
-    expect(calls).toEqual(["list", "delete:week-02", "delete:week-5", "pull"]);
-    expect(messages).toHaveLength(1);
+  it("pull 远端提交失败 → 警告并停止（不再继续 pullNewOnly）", async () => {
+    const rec = makeRecorder(refillRoutes({ pullFail: true }));
+    const { deps, messages } = makeAfterDeps(rec.git);
+
+    await refillAfterSwitch(deps);
+
+    const seq = joined(rec.calls);
+    expect(seq).toContain("pull origin student-2025002");
+    expect(seq).not.toContain("diff --diff-filter=A --name-only HEAD origin/main");
     expect(messages[0].warn).toBe(true);
-    expect(messages[0].text).toContain("拉取作业失败");
+    expect(messages[0].text).toContain("同步远端提交失败");
   });
 
-  it("恢复失败 → 警告 + 仍有汇总（拉取已成功不回滚）", async () => {
-    const { deps, messages } = makePostDeps({ failRestore: true });
-    await clearAndRefill(deps);
+  it("pullNewOnly 失败 → 警告 + 仍有汇总（分支已切换不回滚）", async () => {
+    const rec = makeRecorder(refillRoutes({ newOnlyFail: true }));
+    const { deps, messages } = makeAfterDeps(rec.git);
+
+    await refillAfterSwitch(deps);
+
     expect(messages).toHaveLength(2);
-    expect(messages[0].warn).toBe(true);
-    expect(messages[0].text).toContain("恢复历史提交失败");
-    expect(messages[1]).toEqual({ warn: false, text: "已切换工作区：清空 2 个周目录 · 拉取 3 个文件 · 恢复 0 个提交" });
+    expect(messages[0]).toEqual({ warn: true, text: expect.stringContaining("同步新增作业失败") });
+    expect(messages[1]).toEqual({ warn: false, text: "已切换工作区到 2025002（暂无新作业）" });
   });
+});
 
-  it("无工作区（null 条目）→ 不清空但仍拉取+恢复", async () => {
-    const { deps, messages, calls, deleted } = makePostDeps({ entries: null });
-    await clearAndRefill(deps);
-    expect(deleted).toEqual([]);
-    expect(calls).toEqual(["list", "pull", "restore"]);
-    expect(messages[0]).toEqual({ warn: false, text: "已切换工作区：清空 0 个周目录 · 拉取 3 个文件 · 恢复 2 个提交" });
+// ── 共用机场景：A 的 untracked 自建文件经 add -A 归档后，checkout 新分支时消失 ──
+describe("共用机场景（A → B 切换全链）", () => {
+  it("归档段 add -A + push student-2025001 在前，切换段 checkout student-2025002 + clean -fdX 在后", async () => {
+    const rec = makeRecorder([...archiveRoutes(), ...refillRoutes({ newFiles: "" })]);
+    const before = makeBeforeDeps(rec.git);
+    const after = makeAfterDeps(rec.git);
+
+    await expect(archiveBeforeSwitch(before.deps, "2025001", "2025002")).resolves.toBe(true);
+    await refillAfterSwitch(after.deps);
+
+    const seq = joined(rec.calls);
+    const addIdx = seq.indexOf("add -A");                       // A 的 untracked 自建文件一并归档
+    const pushIdx = seq.findIndex((c) => c.startsWith("push https://"));
+    const checkoutBIdx = seq.indexOf("checkout student-2025002"); // checkout 后 A 的未跟踪文件从工作区消失（git 语义）
+    const cleanIdx = seq.indexOf("clean -fdX");                 // 再清掉 B 视角下的 ignored 缓存垃圾
+    expect(addIdx).toBeGreaterThan(-1);
+    expect(pushIdx).toBeGreaterThan(addIdx);
+    expect(checkoutBIdx).toBeGreaterThan(pushIdx);
+    expect(cleanIdx).toBeGreaterThan(checkoutBIdx);
+    expect(seq).not.toContain("checkout student-2025001 -- .");  // 归档段不会还原工作区
   });
 });

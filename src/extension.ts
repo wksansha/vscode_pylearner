@@ -45,16 +45,14 @@ import { registerMemoryGraphCommand } from "./commands/memoryGraph";
 import { createTeacherReporter } from "./teacher/reporter";
 import { createTraceArchiver } from "./archive/archiver";
 import { loadStudentIdentity, migrateLegacyIdentity } from "./identity/studentIdentity";
-import { openIdentityPage, maybeOpenIdentityPage } from "./identity/identityPage";
+import { openIdentityPage } from "./identity/identityPage";
 import { createSessionConfirmGate } from "./identity/sessionConfirm";
-import {
-  type SubmissionDeps,
-} from "./submission/submissionReporter";
-import { makeSubmitCommand, type SubmitCommandDeps } from "./submission/submitCommand";
-import { collectSubmissionTargets } from "./submission/collectTargets";
-import { makeRestoreCommand, restoreSubmissions } from "./commands/restoreSubmissions";
-import { makeRunPull, pullAssignments } from "./pull/pullCommand";
-import { confirmAndArchive, clearAndRefill, type SwitchArchiveDeps } from "./identity/switchFlow";
+import { archiveBeforeSwitch, refillAfterSwitch, type SubmitNotifyPayload } from "./identity/switchFlow";
+import { createGitClient, type GitClient } from "./git/gitClient";
+import { submitAll } from "./git/commitOps";
+import { pullNewOnly } from "./git/pullOps";
+import { hasLocalChanges, syncToRemoteState } from "./git/syncOps";
+import { remoteWithToken, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl } from "./git/gitEnv";
 import { createAssignmentPanel } from "./views/assignmentPanel";
 import { makeRunSuccessReviewer } from "./submission/reviewRequester";
 import { buildProjectSnapshot as buildProjectSnapshotImpl } from "./submission/projectSnapshot";
@@ -100,6 +98,23 @@ function log(message: string, ...args: unknown[]): void {
   console.log(message, ...args);
   if (outputChannel) {
     outputChannel.appendLine(message);
+  }
+}
+
+/** 提交后服务端轻量通知（spec §5）：失败静默重试一次，仍失败不阻断（下次提交带全量清单） */
+async function postSubmissionNotify(teacherUrl: () => string, p: SubmitNotifyPayload): Promise<void> {
+  const post = async (): Promise<void> => {
+    const res = await fetch(`${teacherUrl()}/api/submissions/notify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(p),
+    });
+    if (!res.ok) throw new Error(`notify ${res.status}`);
+  };
+  try {
+    await post();
+  } catch {
+    try { await post(); } catch { /* 静默：推送已成功，仅索引通知缺失 */ }
   }
 }
 
@@ -211,88 +226,119 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   });
   updateStatusBar();
 
-  // —— 作业系统装配（A1/A3/A8/A25/A26/A27）——
+  // —— 学生分支直连模型（spec 2026-10-15 §4）：git 运行环境解析 ——
+  // 工作区 + 身份 + token + 仓库就绪缺一不可；任一缺失提示后返回 null，命令静默中止
+  const gitRepoUrl = () =>
+    vscode.workspace.getConfiguration("pylearner").get<string>(CONFIG_KEYS.gitRepoUrl, "") || "";
+  async function resolveGitEnv(): Promise<{ git: GitClient; remote: () => string } | null> {
+    const root = vscode.workspace.workspaceFolders?.[0];
+    if (!root) {
+      void vscode.window.showWarningMessage("请先打开课堂文件夹（文件 → 打开文件夹）");
+      return null;
+    }
+    const id = loadStudentIdentity(context.globalState);
+    if (!id.studentId) {
+      void vscode.window.showWarningMessage("请先在身份页设置学号与姓名");
+      return null;
+    }
+    const token = await context.secrets.get(SECRET_KEYS.gitToken);
+    if (!token) {
+      void vscode.window.showWarningMessage("请在右下角重新设置身份以领取 Git 凭证");
+      return null;
+    }
+    const repoUrl = gitRepoUrl();
+    if (!repoUrl) {
+      void vscode.window.showWarningMessage("未配置课堂仓库地址（pylearner.gitRepoUrl），请联系教师");
+      return null;
+    }
+    const remote = () => remoteWithToken(repoUrl, token);
+    if (!(await isGitWorkTree(root.uri.fsPath))) {
+      // clone 要求空目录：仅含 .vscode（VS Code 自动生成）视为可初始化，其余提示学生换空文件夹
+      const entries = await vscode.workspace.fs.readDirectory(root.uri).then(
+        (e) => e,
+        () => [] as [string, vscode.FileType][],
+      );
+      if (!entries.every(([name]) => name === ".vscode")) {
+        void vscode.window.showWarningMessage(
+          "工作区尚未初始化课堂仓库，且当前文件夹不是空的：请在一个空文件夹中打开 VS Code 再试"
+        );
+        return null;
+      }
+      const pick = await vscode.window.showInformationMessage(
+        "工作区尚未初始化课堂仓库，立即初始化（将拉取全部作业历史）？",
+        { modal: true },
+        "立即初始化"
+      );
+      if (pick !== "立即初始化") return null;
+      try {
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: "正在初始化课堂仓库…" },
+          () => bootstrapClone(root.uri.fsPath, remote())
+        );
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `课堂仓库初始化失败：${e instanceof Error ? e.message : String(e)}`
+        );
+        return null;
+      }
+    }
+    const git = createGitClient(root.uri.fsPath);
+    // origin 刷新为当前学生 token：换机/换人后 fetch/pull 读取凭证跟随本人（push 用显式 URL，不依赖 origin）
+    await updateOriginUrl(git, remote()).catch(() => {});
+    return { git, remote };
+  }
+  // 提交删除确认（spec 4.4 第 2 步）：提交按钮与一键换机归档共用
+  const confirmDeleteModal = async (n: number): Promise<boolean> => {
+    const pick = await vscode.window.showWarningMessage(
+      `本次提交将删除 ${n} 个文件，确定？`,
+      { modal: true },
+      "确定删除并提交"   // 隐式取消由 VS Code 模态框自动追加
+    );
+    return pick === "确定删除并提交";
+  };
+  const switchNotify = (m: string, warn: boolean) =>
+    void (warn ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m));
+
+  // —— 作业系统装配（A25：身份页 + 一键换机）——
   const identityDeps = {
     teacherUrl: () =>
       vscode.workspace
         .getConfiguration("pylearner")
         .get<string>(CONFIG_KEYS.teacherUrl, DEFAULT_TEACHER_URL),
     onSaved: () => { sessionGate?.markConfirmed(); },   // 保存成功 = 本人声明身份，会话内免再确认
-    // 一键换机：身份页校验通过且学号变化时触发（编排逻辑见 switchFlow.ts；submissionDeps 在下方声明，调用时已初始化）
+    // 一键换机（spec §4.6）：身份页校验通过且学号变化时触发，四段编排见 switchFlow.ts（全 git 原语）
     switchFlow: {
-      beforeSwitch: (oldId: string, newId: string) =>
-        confirmAndArchive(
+      beforeSwitch: async (oldId: string, newId: string) => {
+        const env = await resolveGitEnv();
+        if (!env) return false;
+        const old = loadStudentIdentity(context.globalState);
+        return archiveBeforeSwitch(
           {
-            // collectTargets 等字段是激活时动态附加的（声明类型未含，运行时必已就位）→ 按 SwitchArchiveDeps 断言
-            ...(submissionDeps as unknown as SwitchArchiveDeps),
-            rootFsPath: () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-            confirm: async ({ oldId, newId, count }) => {
+            git: env.git,
+            studentId: oldId,
+            studentName: old.studentName ?? oldId,
+            remoteWithToken: env.remote,
+            confirmDelete: confirmDeleteModal,
+            notifyServer: (p) => postSubmissionNotify(identityDeps.teacherUrl, p),
+            confirm: async ({ oldId: o, newId: n, count }) => {
               const pick = await vscode.window.showInformationMessage(
-                `检测到身份切换：${oldId} → ${newId}\n将先归档当前工作区 ${count} 个练习，然后清空作业目录、拉取最新作业并恢复你的历史提交。`,
+                `检测到身份切换：${o} → ${n}\n将先把当前工作区${count > 0 ? `的 ${count} 个变更` : ""}提交归档到 ${o} 的分支，再切换到 ${n} 的分支。`,
                 { modal: true },
-                "继续切换"   // 隐式取消由 VS Code 模态框自动追加，显式传会出现两个取消
+                "继续切换"   // 隐式取消由 VS Code 模态框自动追加
               );
               return pick === "继续切换";
             },
-            notify: (m: string, warn: boolean) =>
-              void (warn ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)),
+            notify: switchNotify,
           },
           oldId,
           newId,
-        ),
-      afterSwitch: () =>
-        clearAndRefill({
-          listEntries: async () => {
-            const root = vscode.workspace.workspaceFolders?.[0];
-            if (!root) return null;
-            const entries = await vscode.workspace.fs.readDirectory(root.uri);
-            return entries.map(([name, type]) => [name, type === vscode.FileType.Directory] as [string, boolean]);
-          },
-          deleteDir: async (name: string) => {
-            const root = vscode.workspace.workspaceFolders?.[0];
-            if (!root) return;
-            await vscode.workspace.fs.delete(vscode.Uri.joinPath(root.uri, name), { recursive: true });
-          },
-          pull: async () => {
-            const root = vscode.workspace.workspaceFolders?.[0];
-            if (!root) throw new Error("请先打开课堂文件夹");
-            return pullAssignments({
-              teacherUrl: identityDeps.teacherUrl,
-              globalState: context.globalState,
-              fileExists: async (rel) => {
-                try { await vscode.workspace.fs.stat(vscode.Uri.joinPath(root.uri, rel)); return true; } catch { return false; }
-              },
-              writeFile: async (rel, content) => {
-                const target = vscode.Uri.joinPath(root.uri, rel);
-                await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(target, ".."));
-                await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(content));
-              },
-            });
-          },
-          restore: async () => {
-            const root = vscode.workspace.workspaceFolders?.[0];
-            if (!root) throw new Error("请先打开课堂文件夹");
-            const r = await restoreSubmissions({
-              teacherUrl: identityDeps.teacherUrl,
-              getStudentId: () => loadStudentIdentity(context.globalState).studentId,
-              readFile: async (rel) => {
-                try {
-                  return new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(root.uri, rel)));
-                } catch {
-                  return null;
-                }
-              },
-              writeFile: async (rel, content) => {
-                const target = vscode.Uri.joinPath(root.uri, rel);
-                await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(target, ".."));
-                await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(content));
-              },
-            });
-            return { restored: r.restored.length };
-          },
-          notify: (m: string, warn: boolean) =>
-            void (warn ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)),
-        }),
+        );
+      },
+      afterSwitch: async (newId: string) => {
+        const env = await resolveGitEnv();
+        if (!env) return;
+        await refillAfterSwitch({ git: env.git, newStudentId: newId, notify: switchNotify });
+      },
     },
   };
   // —— L1 全量归档（spec：docs/superpowers/specs/2026-10-13-l1-trace-archive-design.md）——
@@ -325,21 +371,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       return null;
     }
   };
-  const saveIfDirty = async (filePath: string) => {
-    const doc = vscode.workspace.textDocuments.find(
-      (d) => d.uri.fsPath === filePath
-    );
-    if (doc?.isDirty) await doc.save();
-  };
-  const submissionDeps: SubmissionDeps = {
-    teacherUrl: identityDeps.teacherUrl,
-    getIdentity,
-    onIdentityMissing: () =>
-      maybeOpenIdentityPage(identityDeps, context, loadStudentIdentity(context.globalState)),
-    globalState: context.globalState,
-    saveIfDirty,
-  };
-  // V2.0：F5 评审链（替代自动提交；提交按钮纯归档）
+  // V2.0：F5 评审链（run 成功触发，请求自带代码文本；与学生分支提交互不干扰）
   const projectFs = {
     readDirectory: async (fsPath: string) => {
       try {
@@ -367,11 +399,6 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   };
   const buildProjectSnapshot = (filePath: string, content: string) =>
     buildProjectSnapshotImpl(snapshotDeps, filePath, content);
-  (submissionDeps as SubmissionDeps & { buildProjectSnapshot?: unknown }).buildProjectSnapshot = buildProjectSnapshot;
-  // V2.0 提交按钮：一键归档全部练习——复用 projectFs 适配器遍历 week-XX 收集目标（readFile 供回退单文件路径）
-  (submissionDeps as SubmissionDeps & { collectTargets?: unknown }).collectTargets =
-    (rootFsPath: string) => collectSubmissionTargets(projectFs, rootFsPath);
-  (submissionDeps as SubmissionDeps & { readFile?: unknown }).readFile = readFile;
   const reviewer = makeRunSuccessReviewer(
     { teacherUrl: identityDeps.teacherUrl, getIdentity, buildProjectSnapshot,
       notify: (m, w) => void (w ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)) },
@@ -382,46 +409,110 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     if (!cfg.get<boolean>(CONFIG_KEYS.submissionEnabled, true)) return;
     void reviewer(ev);   // 内部整体 try/catch
   });
+
+  // 提交作业（spec 4.4）：add -A → commit → fetch+rebase → push 学生分支 → notify 服务端
   context.subscriptions.push(
     vscode.commands.registerCommand(CMD_IDS.submitExercise, async () => {
       if (!sessionGate || !(await sessionGate.ensureConfirmed())) return;
-      await makeSubmitCommand(submissionDeps, vscode)();
+      const env = await resolveGitEnv();
+      if (!env) return;
+      const id = loadStudentIdentity(context.globalState);
+      if (!id.studentId) return;   // sessionGate 已保证，类型收窄兜底
+      try {
+        const r = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: "正在提交作业…" },
+          () => submitAll({
+            git: env.git,
+            studentId: id.studentId!,
+            studentName: id.studentName ?? id.studentId!,
+            remoteWithToken: env.remote,
+            confirmDelete: confirmDeleteModal,
+            notify: (p) => postSubmissionNotify(identityDeps.teacherUrl, p),
+          }),
+        );
+        switch (r.kind) {
+          case "ok":
+            void vscode.window.showInformationMessage("✅ 提交成功：工作区已推送到你的分支");
+            break;
+          case "nothing":
+            void vscode.window.showInformationMessage("工作区无变更，无需提交");
+            break;
+          case "deleteCancelled":
+            void vscode.window.showInformationMessage("已取消提交");
+            break;
+          case "branchMismatch":
+            void vscode.window.showWarningMessage(
+              `当前分支不是 student-${id.studentId}，提交已取消（请勿手动切换分支，可用「同步作业」恢复）`);
+            break;
+          case "rebaseConflict":
+            void vscode.window.showWarningMessage(
+              "与你在其他电脑的提交冲突：本地提交已保留，请联系教师协助选择保留版本");
+            break;
+          case "pushFailed":
+            void vscode.window.showWarningMessage("已本地保存，联网后重新提交即可补推");
+            break;
+        }
+      } catch (e) {
+        void vscode.window.showErrorMessage(`提交失败：${e instanceof Error ? e.message : String(e)}`);
+      }
     })
   );
 
-  // 拉取：命令触发（V2.0：激活自动拉取已取消，仅按钮触发）
-  const pullDeps = {
-    teacherUrl: identityDeps.teacherUrl,
-    globalState: context.globalState,
-    // PullDeps 类型要求这两个成员；makeRunPull 内部一律用 vscode.workspace.fs 实现覆盖它们
-    fileExists: async () => false,
-    writeFile: async () => {},
-  };
-  const runPull = makeRunPull(
-    pullDeps,
-    vscode,
-    (m, warn) =>
-      warn ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)
-  );
+  // 拉取作业（spec 4.3）：先收敛自己分支，再只新增 main 的新题（不改已有文件）
   context.subscriptions.push(
     vscode.commands.registerCommand(CMD_IDS.pullAssignments, async () => {
       if (!sessionGate || !(await sessionGate.ensureConfirmed())) return;
-      void runPull();
+      const env = await resolveGitEnv();
+      if (!env) return;
+      const id = loadStudentIdentity(context.globalState);
+      if (!id.studentId) return;
+      try {
+        const r = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: "正在拉取作业…" },
+          () => pullNewOnly(env.git, id.studentId!),
+        );
+        if (r.pulled.length > 0) {
+          void vscode.window.showInformationMessage(`已拉取新作业：${r.pulled.length} 个文件（来自教师 main 分支）`);
+        } else {
+          void vscode.window.showInformationMessage("暂无新作业");
+        }
+      } catch (e) {
+        void vscode.window.showErrorMessage(`拉取作业失败：${e instanceof Error ? e.message : String(e)}`);
+      }
     })
   );
 
-  // 恢复我的提交：从服务端拉回本人每个练习的最近一次提交（教师兜底渠道的对称功能）
+  // 同步作业（spec 4.5，旧「恢复我的提交」）：工作区强制还原为远端自己分支的最新已提交状态
   context.subscriptions.push(
-    vscode.commands.registerCommand(
-      CMD_IDS.restoreSubmissions,
-      async () => {
-        if (!sessionGate || !(await sessionGate.ensureConfirmed())) return;
-        await makeRestoreCommand(
-          { teacherUrl: identityDeps.teacherUrl, globalState: context.globalState },
-          vscode
-        )();
+    vscode.commands.registerCommand(CMD_IDS.syncAssignments, async () => {
+      if (!sessionGate || !(await sessionGate.ensureConfirmed())) return;
+      const env = await resolveGitEnv();
+      if (!env) return;
+      const id = loadStudentIdentity(context.globalState);
+      if (!id.studentId) return;
+      if (await hasLocalChanges(env.git)) {
+        const pick = await vscode.window.showWarningMessage(
+          "未提交的修改已自动备份并将在工作区移除，继续？",
+          { modal: true },
+          "继续同步"
+        );
+        if (pick !== "继续同步") return;
       }
-    )
+      try {
+        const r = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: "正在同步作业…" },
+          () => syncToRemoteState(env.git, id.studentId!),
+        );
+        if (r.kind === "rebaseConflict") {
+          void vscode.window.showWarningMessage("与你在其他电脑的提交冲突，同步已中止，可重试或联系教师");
+          return;
+        }
+        void vscode.window.showInformationMessage(
+          `✅ 同步完成：工作区已还原为你分支的最新提交${r.stashed ? "（原修改已备份，可找教师从 stash 找回）" : ""}`);
+      } catch (e) {
+        void vscode.window.showErrorMessage(`同步失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+    })
   );
 
   // 「运行和调试」侧边栏「课堂作业」三按钮面板（spec §5.5）
@@ -604,6 +695,11 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   // 这里保留 refresher 的创建，但不再触发定时刷新
   log("[pylearner] auto profile refresh disabled");
 
+  // git 探测（spec §8）：机房机器缺 Git → 安装引导（不阻断其他功能）
+  void probeGit().then((ok) => {
+    if (!ok) void vscode.window.showWarningMessage("未检测到 Git，请安装后重启 VS Code");
+  });
+
   // 首启迁移旧 SecretStorage 身份；无身份 → 打开身份页；有身份 → 静默复核一次（A25）（V2.0：自动拉取已取消，仅按钮触发）
   void (async () => {
     try {
@@ -624,6 +720,10 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
           if (!res.ok) {
             statusBar.tooltip = "身份校验失败（名册可能已更新），点击重新设置";
             openIdentityPage(identityDeps, context);
+          } else {
+            // 静默补领 gitToken：学生换机/重建秘钥环后免手动重存身份
+            const body = await res.json().catch(() => ({})) as { gitToken?: string | null };
+            if (body.gitToken) await context.secrets.store(SECRET_KEYS.gitToken, body.gitToken);
           }
         } catch {
           /* 服务器不可达：静默，下次再复核 */

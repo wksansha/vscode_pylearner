@@ -61,10 +61,10 @@
         "icon": "$(repo-pull)"
       },
       {
-        "command": "pylearner.restoreSubmissions",
-        "title": "恢复我的提交",
+        "command": "pylearner.syncAssignments",
+        "title": "同步作业",
         "category": "Python Learner",
-        "icon": "$(history)"
+        "icon": "$(sync)"
       },
       {
         "command": "pylearner.openChat",
@@ -112,7 +112,7 @@
           "group": "navigation@902"
         },
         {
-          "command": "pylearner.restoreSubmissions",
+          "command": "pylearner.syncAssignments",
           "when": "editorLangId == python",
           "group": "navigation@903"
         }
@@ -178,6 +178,11 @@
           "type": "boolean",
           "default": true,
           "description": "启用作业提交通道"
+        },
+        "pylearner.gitRepoUrl": {
+          "type": "string",
+          "default": "",
+          "description": "课堂 Git 仓库地址（Gitea clone URL，部署时由教师填写；留空将禁用提交/拉取/同步）"
         }
       }
     }

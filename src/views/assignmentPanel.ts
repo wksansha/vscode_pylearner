@@ -13,7 +13,7 @@ export function createAssignmentPanel(): vscode.TreeDataProvider<PanelItem> {
   const items: PanelItem[] = [
     { label: "拉取作业", command: CMD_IDS.pullAssignments, icon: new vscode.ThemeIcon("repo-pull") },
     { label: "提交作业", command: CMD_IDS.submitExercise, icon: new vscode.ThemeIcon("cloud-upload") },
-    { label: "恢复我的提交", command: CMD_IDS.restoreSubmissions, icon: new vscode.ThemeIcon("history") },
+    { label: "同步作业", command: CMD_IDS.syncAssignments, icon: new vscode.ThemeIcon("sync") },
   ];
   return {
     getChildren: () => items,
