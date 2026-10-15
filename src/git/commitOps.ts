@@ -17,7 +17,6 @@ export interface SubmitDeps {
   git: GitClient; studentId: string; studentName: string;
   remoteWithBasic: () => string;
   confirmDelete?: (n: number) => Promise<boolean>;   // spec 4.4 第 2 步：删除检测确认
-  notify: (p: { studentId: string; studentName: string; commitHash: string; files: string[]; pushedAt: number }) => Promise<void>;
 }
 export type SubmitResult = { kind: "ok" } | { kind: "nothing" } | { kind: "branchMismatch" } | { kind: "deleteCancelled" } | { kind: "rebaseConflict" } | { kind: "pushFailed" };
 
@@ -62,6 +61,5 @@ export async function submitAll(deps: SubmitDeps): Promise<SubmitResult> {
   } catch {
     return { kind: "pushFailed" };
   }
-  await deps.notify({ studentId, studentName, commitHash, files, pushedAt: Date.now() }).catch(() => {});
   return { kind: "ok" };
 }

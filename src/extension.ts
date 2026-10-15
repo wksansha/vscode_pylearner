@@ -47,7 +47,7 @@ import { createTraceArchiver } from "./archive/archiver";
 import { loadStudentIdentity, migrateLegacyIdentity } from "./identity/studentIdentity";
 import { openIdentityPage } from "./identity/identityPage";
 import { createSessionConfirmGate } from "./identity/sessionConfirm";
-import { archiveBeforeSwitch, refillAfterSwitch, type SubmitNotifyPayload } from "./identity/switchFlow";
+import { archiveBeforeSwitch, refillAfterSwitch } from "./identity/switchFlow";
 import { createGitClient, type GitClient } from "./git/gitClient";
 import { submitAll } from "./git/commitOps";
 import { pullNewOnly } from "./git/pullOps";
@@ -99,23 +99,6 @@ function log(message: string, ...args: unknown[]): void {
   console.log(message, ...args);
   if (outputChannel) {
     outputChannel.appendLine(message);
-  }
-}
-
-/** 提交后服务端轻量通知（spec §5）：失败静默重试一次，仍失败不阻断（下次提交带全量清单） */
-async function postSubmissionNotify(teacherUrl: () => string, p: SubmitNotifyPayload): Promise<void> {
-  const post = async (): Promise<void> => {
-    const res = await fetch(`${teacherUrl()}/api/submissions/notify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(p),
-    });
-    if (!res.ok) throw new Error(`notify ${res.status}`);
-  };
-  try {
-    await post();
-  } catch {
-    try { await post(); } catch { /* 静默：推送已成功，仅索引通知缺失 */ }
   }
 }
 
@@ -328,7 +311,6 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
             studentName: old.studentName ?? oldId,
             remoteWithBasic: env.remote,
             confirmDelete: confirmDeleteModal,
-            notifyServer: (p) => postSubmissionNotify(identityDeps.teacherUrl, p),
             confirm: async ({ oldId: o, newId: n, count }) => {
               const pick = await vscode.window.showInformationMessage(
                 `检测到身份切换：${o} → ${n}\n将先把当前工作区${count > 0 ? `的 ${count} 个变更` : ""}提交归档到 ${o} 的分支，再切换到 ${n} 的分支。`,
@@ -424,7 +406,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     void reviewer(ev);   // 内部整体 try/catch
   });
 
-  // 提交作业（spec 4.4）：add -A → commit → fetch+rebase → push 学生分支 → notify 服务端
+  // 提交作业（spec 4.4）：add -A → commit → fetch+rebase → push 学生分支（提交事实以 git 历史为准，无服务端上报）
   context.subscriptions.push(
     vscode.commands.registerCommand(CMD_IDS.submitExercise, async () => {
       if (!sessionGate || !(await sessionGate.ensureConfirmed())) return;
@@ -443,7 +425,6 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
             studentName: id.studentName ?? id.studentId!,
             remoteWithBasic: env.remote,
             confirmDelete: confirmDeleteModal,
-            notify: (p) => postSubmissionNotify(identityDeps.teacherUrl, p),
           }),
         );
         switch (r.kind) {

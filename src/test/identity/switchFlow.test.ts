@@ -4,7 +4,6 @@ import {
   refillAfterSwitch,
   type BeforeSwitchDeps,
   type AfterSwitchDeps,
-  type SubmitNotifyPayload,
 } from "../../identity/switchFlow";
 import { createGitClient, type ExecFn } from "../../git/gitClient";
 
@@ -84,7 +83,6 @@ function makeBeforeDeps(git: ReturnType<typeof createGitClient>, opts?: {
   confirmDelete?: (n: number) => Promise<boolean>;
 }) {
   const messages: Msg[] = [];
-  const notified: SubmitNotifyPayload[] = [];
   const confirms: { oldId: string; newId: string; count: number }[] = [];
   const deps: BeforeSwitchDeps = {
     git,
@@ -92,11 +90,10 @@ function makeBeforeDeps(git: ReturnType<typeof createGitClient>, opts?: {
     studentName: "张三",
     remoteWithBasic: () => "https://2025001:tok@gitea.example/org/hw.git",
     confirmDelete: opts?.confirmDelete,
-    notifyServer: async (p) => { notified.push(p); },
     confirm: async (info) => { confirms.push(info); return !opts?.cancel; },
     notify: (text, warn) => { messages.push({ text, warn }); },
   };
-  return { deps, messages, notified, confirms };
+  return { deps, messages, confirms };
 }
 
 function makeAfterDeps(git: ReturnType<typeof createGitClient>) {
@@ -111,36 +108,31 @@ function makeAfterDeps(git: ReturnType<typeof createGitClient>) {
 
 // ── 阶段一 archiveBeforeSwitch（确认 + 旧身份提交归档）────────────────────
 describe("archiveBeforeSwitch（阶段一：确认 + submitAll 归档）", () => {
-  it("确认 + 归档成功 → true，push 推旧分支、notifyServer 收到载荷、成功通知", async () => {
+  it("确认 + 归档成功 → true，push 推旧分支、成功通知", async () => {
     const rec = makeRecorder(archiveRoutes());
-    const { deps, messages, notified, confirms } = makeBeforeDeps(rec.git);
+    const { deps, messages, confirms } = makeBeforeDeps(rec.git);
 
     await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(true);
 
     expect(confirms).toEqual([{ oldId: "2025001", newId: "2025002", count: 2 }]);
     expect(joined(rec.calls)).toContain("push https://2025001:tok@gitea.example/org/hw.git HEAD:refs/heads/student-2025001");
-    expect(notified).toEqual([
-      { studentId: "2025001", studentName: "张三", commitHash: "feedc0de", files: ["week-01/a.py", "notes.md"], pushedAt: expect.any(Number) },
-    ]);
     expect(messages).toEqual([{ warn: false, text: "已用 2025001 提交归档当前工作区" }]);
   });
 
   it("工作区无变更（nothing to commit）→ true + 提示无需归档", async () => {
     const rec = makeRecorder(archiveRoutes({ nothingToCommit: true }));
-    const { deps, messages, notified } = makeBeforeDeps(rec.git);
+    const { deps, messages } = makeBeforeDeps(rec.git);
 
     await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(true);
-    expect(notified).toHaveLength(0);
     expect(messages).toEqual([{ warn: false, text: "工作区无变更，2025001 无需归档" }]);
   });
 
   it("用户取消确认 → false，不触发任何归档动作", async () => {
     const rec = makeRecorder(archiveRoutes());
-    const { deps, messages, notified } = makeBeforeDeps(rec.git, { cancel: true });
+    const { deps, messages } = makeBeforeDeps(rec.git, { cancel: true });
 
     await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(false);
     expect(joined(rec.calls)).toEqual(["status --porcelain"]);   // 只探测变更数
-    expect(notified).toHaveLength(0);
     expect(messages).toHaveLength(0);
   });
 
@@ -156,10 +148,9 @@ describe("archiveBeforeSwitch（阶段一：确认 + submitAll 归档）", () =>
 
   it("push 失败 → false + 警告（防代码丢失，中止切换）", async () => {
     const rec = makeRecorder(archiveRoutes({ pushFail: true }));
-    const { deps, messages, notified } = makeBeforeDeps(rec.git);
+    const { deps, messages } = makeBeforeDeps(rec.git);
 
     await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(false);
-    expect(notified).toHaveLength(0);
     expect(messages[0].warn).toBe(true);
     expect(messages[0].text).toContain("推送失败");
   });
@@ -176,11 +167,10 @@ describe("archiveBeforeSwitch（阶段一：确认 + submitAll 归档）", () =>
 
   it("删除确认被取消 → false，不 add 不提示", async () => {
     const rec = makeRecorder(archiveRoutes({ status: "M week-01/a.py\nD  week-02/old.py\n" }));
-    const { deps, messages, notified } = makeBeforeDeps(rec.git, { confirmDelete: async () => false });
+    const { deps, messages } = makeBeforeDeps(rec.git, { confirmDelete: async () => false });
 
     await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(false);
     expect(joined(rec.calls)).not.toContain("add -A");
-    expect(notified).toHaveLength(0);
     expect(messages).toHaveLength(0);
   });
 

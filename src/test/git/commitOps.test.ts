@@ -4,8 +4,6 @@ import { submitAll, countDeleted, type SubmitDeps } from "../../git/commitOps";
 
 // ── 提交原语：recorder 模式，按参数路由返回值，记录完整调用序列 ───────────
 
-type NotifyPayload = { studentId: string; studentName: string; commitHash: string; files: string[]; pushedAt: number };
-
 interface Opts {
   currentBranch?: string;
   status?: string;
@@ -13,13 +11,11 @@ interface Opts {
   rebaseFail?: boolean;
   firstPush?: boolean;   // 首推场景：远端学生分支尚不存在（首次 push 才创建）
   pushFail?: boolean;
-  notifyFail?: boolean;
   confirmDelete?: (n: number) => Promise<boolean>;
 }
 
 function makeDeps(opts?: Opts) {
   const calls: string[][] = [];
-  const notified: NotifyPayload[] = [];
   const confirmCalls: number[] = [];
   const exec: ExecFn = async (_file, args) => {
     calls.push([...args]);
@@ -87,19 +83,15 @@ function makeDeps(opts?: Opts) {
     confirmDelete: opts?.confirmDelete
       ? async (n: number) => { confirmCalls.push(n); return opts.confirmDelete!(n); }
       : undefined,
-    notify: async (p) => {
-      if (opts?.notifyFail) throw new Error("server down");
-      notified.push(p);
-    },
   };
-  return { deps, calls, notified, confirmCalls };
+  return { deps, calls, confirmCalls };
 }
 
 const joined = (calls: string[][]) => calls.map((c) => c.join(" "));
 
 describe("submitAll", () => {
-  it("正常链路 → ok，git 严格按序：断言→status→add→commit→fetch→守卫→rebase→rev-parse→diff→push→notify", async () => {
-    const { deps, calls, notified } = makeDeps();
+  it("正常链路 → ok，git 严格按序：断言→status→add→commit→fetch→守卫→rebase→rev-parse→diff→push（notify 已退役）", async () => {
+    const { deps, calls } = makeDeps();
 
     const res = await submitAll(deps);
 
@@ -117,13 +109,10 @@ describe("submitAll", () => {
       "diff --name-only remote123 HEAD",
       "push https://2025001:tok@gitea.example/org/hw.git HEAD:refs/heads/student-2025001",
     ]);
-    expect(notified).toEqual([
-      { studentId: "2025001", studentName: "张三", commitHash: "feedc0de", files: ["week-01/a.py"], pushedAt: expect.any(Number) },
-    ]);
   });
 
   it("首推（远端学生分支不存在）→ 跳过 rebase + ls-files 全量清单 + push 创建远端分支 → ok", async () => {
-    const { deps, calls, notified } = makeDeps({ firstPush: true });
+    const { deps, calls } = makeDeps({ firstPush: true });
 
     const res = await submitAll(deps);
 
@@ -141,13 +130,10 @@ describe("submitAll", () => {
       "push https://2025001:tok@gitea.example/org/hw.git HEAD:refs/heads/student-2025001",
     ]);
     expect(joined(calls).some((c) => c.startsWith("rebase"))).toBe(false);
-    expect(notified).toEqual([
-      { studentId: "2025001", studentName: "张三", commitHash: "feedc0de", files: ["week-01/a.py"], pushedAt: expect.any(Number) },
-    ]);
   });
 
-  it("nothing to commit → { kind: nothing }，不 fetch/rebase/push/notify（天然幂等）", async () => {
-    const { deps, calls, notified } = makeDeps({
+  it("nothing to commit → { kind: nothing }，不 fetch/rebase/push（天然幂等）", async () => {
+    const { deps, calls } = makeDeps({
       commitFail: { stdout: "On branch student-2025001\nnothing to commit, working tree clean", stderr: "" },
     });
 
@@ -157,17 +143,15 @@ describe("submitAll", () => {
     const seq = joined(calls);
     expect(seq[seq.length - 1]).toContain("commit -m");
     expect(seq.some((c) => c.startsWith("fetch") || c.startsWith("push"))).toBe(false);
-    expect(notified).toHaveLength(0);
   });
 
   it("分支不匹配（在 main 上）→ branchMismatch，仅断言分支后即停", async () => {
-    const { deps, calls, notified } = makeDeps({ currentBranch: "main" });
+    const { deps, calls } = makeDeps({ currentBranch: "main" });
 
     const res = await submitAll(deps);
 
     expect(res).toEqual({ kind: "branchMismatch" });
     expect(joined(calls)).toEqual(["rev-parse --abbrev-ref HEAD"]);
-    expect(notified).toHaveLength(0);
   });
 
   it("status 含 D 条目 + confirmDelete=false → deleteCancelled，不 add", async () => {
@@ -184,7 +168,7 @@ describe("submitAll", () => {
   });
 
   it("status 含 D 条目 + confirmDelete=true → 正常提交到 ok", async () => {
-    const { deps, calls, confirmCalls, notified } = makeDeps({
+    const { deps, calls, confirmCalls } = makeDeps({
       status: "D  week-02/old.py\n",
       confirmDelete: async () => true,
     });
@@ -194,11 +178,10 @@ describe("submitAll", () => {
     expect(res).toEqual({ kind: "ok" });
     expect(confirmCalls).toEqual([1]);
     expect(joined(calls)).toContain("add -A");
-    expect(notified).toHaveLength(1);
   });
 
-  it("rebase 冲突 → rebase --abort 后返回 rebaseConflict，不 push 不 notify", async () => {
-    const { deps, calls, notified } = makeDeps({ rebaseFail: true });
+  it("rebase 冲突 → rebase --abort 后返回 rebaseConflict，不 push", async () => {
+    const { deps, calls } = makeDeps({ rebaseFail: true });
 
     const res = await submitAll(deps);
 
@@ -209,11 +192,10 @@ describe("submitAll", () => {
     expect(seq[rebaseIdx + 1]).toBe("rebase --abort");
     expect(seq[seq.length - 1]).toBe("rebase --abort");
     expect(seq.some((c) => c.startsWith("push"))).toBe(false);
-    expect(notified).toHaveLength(0);
   });
 
-  it("push 失败 → pushFailed，本地提交保留（无 reset/abort 等撤销动作），不 notify", async () => {
-    const { deps, calls, notified } = makeDeps({ pushFail: true });
+  it("push 失败 → pushFailed，本地提交保留（无 reset/abort 等撤销动作）", async () => {
+    const { deps, calls } = makeDeps({ pushFail: true });
 
     const res = await submitAll(deps);
 
@@ -221,16 +203,6 @@ describe("submitAll", () => {
     const seq = joined(calls);
     expect(seq[seq.length - 1]).toContain("push ");
     expect(seq.some((c) => c.startsWith("reset") || c.startsWith("rebase --abort"))).toBe(false);
-    expect(notified).toHaveLength(0);
-  });
-
-  it("notify 失败 → 仍返回 ok（推送已成功，上报失败不阻断）", async () => {
-    const { deps, notified } = makeDeps({ notifyFail: true });
-
-    const res = await submitAll(deps);
-
-    expect(res).toEqual({ kind: "ok" });
-    expect(notified).toHaveLength(0);
   });
 
   it("status 含 MD 条目（暂存修改+工作区删除）→ 同样触发删除确认（Task 345 缺口回归）", async () => {

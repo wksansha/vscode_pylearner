@@ -20,10 +20,6 @@ import { pullNewOnly, pullStudentBranch } from "../git/pullOps";
 
 export type NotifyFn = (msg: string, warn: boolean) => void;
 
-export interface SubmitNotifyPayload {
-  studentId: string; studentName: string; commitHash: string; files: string[]; pushedAt: number;
-}
-
 export interface BeforeSwitchDeps {
   git: GitClient;
   /** 旧身份（归档归属者，与保存新身份前的 globalState 一致） */
@@ -32,8 +28,6 @@ export interface BeforeSwitchDeps {
   remoteWithBasic: () => string;
   /** submitAll 删除确认透传（VS Code 模态；不传视为确认） */
   confirmDelete?: (n: number) => Promise<boolean>;
-  /** push 成功后的服务端轻量通知（失败静默重试由扩展端包装） */
-  notifyServer: (p: SubmitNotifyPayload) => Promise<void>;
   confirm: (info: { oldId: string; newId: string; count: number }) => Promise<boolean>;
   notify: NotifyFn;
 }
@@ -47,7 +41,7 @@ export async function archiveBeforeSwitch(deps: BeforeSwitchDeps, oldId: string,
   try {
     result = await submitAll({
       git: deps.git, studentId: deps.studentId, studentName: deps.studentName,
-      remoteWithBasic: deps.remoteWithBasic, confirmDelete: deps.confirmDelete, notify: deps.notifyServer,
+      remoteWithBasic: deps.remoteWithBasic, confirmDelete: deps.confirmDelete,
     });
   } catch (e) {
     deps.notify(`归档失败：${errMsg(e)}，身份未切换，可重试`, true);
