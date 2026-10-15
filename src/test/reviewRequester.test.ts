@@ -1,9 +1,8 @@
 // src/test/reviewRequester.test.ts
 import { describe, it, expect } from "vitest";
-import { requestReview, makeRunSuccessReviewer, type ReviewerDeps } from "../submission/reviewRequester";
+import { requestReview, makeRunSuccessReviewer, toPosix, type ReviewerDeps } from "../submission/reviewRequester";
 import type { TraceEvent } from "../events/types";
 
-const ID = "01234567-89ab-cdef-0123-456789abcdef";
 function makeDeps(status: "pass" | "fail" | "unreviewed", reason = "边界未处理") {
   const notices: [string, boolean][] = [];
   const posts: unknown[] = [];
@@ -12,6 +11,8 @@ function makeDeps(status: "pass" | "fail" | "unreviewed", reason = "边界未处
     teacherUrl: () => "http://t",
     getIdentity: () => ({ studentId: "2025001", studentName: "张三" }),
     buildProjectSnapshot: async () => null,
+    workspaceRoot: () => "C:\\ws",
+    getCommitHash: async () => "abc1234",
     fetchImpl: (async (_url: string, init?: RequestInit) => {
       urls.push(_url);
       posts.push(JSON.parse(String(init?.body)));
@@ -22,40 +23,82 @@ function makeDeps(status: "pass" | "fail" | "unreviewed", reason = "边界未处
   return { deps, notices, posts, urls };
 }
 
-describe("requestReview（F5 评审）", () => {
-  it("单文件：payload 无 files，回执按三态", async () => {
-    const { deps, notices } = makeDeps("pass", "通过");
-    const r = await requestReview(deps, { filePath: "x", content: `# exercise-id: ${ID}\nprint(1)` });
+describe("toPosix（fsPath → 相对仓库根 POSIX 路径）", () => {
+  it("根内路径：反斜杠→斜杠 + 剥根前缀", () => {
+    expect(toPosix("C:\\ws\\lesson5\\weather-app\\main.py", "C:\\ws")).toBe("lesson5/weather-app/main.py");
+  });
+  it("容忍正斜杠与根尾反斜杠", () => {
+    expect(toPosix("C:/ws/lesson5/a.py", "C:\\ws\\")).toBe("lesson5/a.py");
+  });
+  it("根外路径：原样 POSIX 化（交服务端 404 判定）", () => {
+    expect(toPosix("D:\\other\\a.py", "C:\\ws")).toBe("D:/other/a.py");
+  });
+});
+
+describe("requestReview（F5 评审，filePath + commitHash）", () => {
+  it("命中：POST body 含 POSIX filePath + commitHash + code，pass → 回执", async () => {
+    const { deps, notices, posts, urls } = makeDeps("pass", "通过");
+    const r = await requestReview(deps, { filePath: "C:\\ws\\lesson5\\a.py", content: "print(1)" });
     expect(r).toBe("reviewed");
+    expect(urls[0]).toBe("http://t/api/reviews/request");
+    const body = posts[0] as { filePath: string; commitHash: string; code: string; studentId: string; studentName: string };
+    expect(body.filePath).toBe("lesson5/a.py");
+    expect(body.commitHash).toBe("abc1234");
+    expect(body.code).toBe("print(1)");
+    expect(body.studentId).toBe("2025001");
     expect(notices[0][0]).toContain("评审通过");
   });
-  it("fail → warning 回执带 reason", async () => {
-    const { deps, notices } = makeDeps("fail");
-    await requestReview(deps, { filePath: "x", content: `# exercise-id: ${ID}\nprint(1)` });
-    expect(notices[0][0]).toContain("评审未通过");
-    expect(notices[0][0]).toContain("边界未处理");
-    expect(notices[0][1]).toBe(true);
+  it("fail → warning 回执带 reason；unreviewed → 中性提示", async () => {
+    const d1 = makeDeps("fail");
+    await requestReview(d1.deps, { filePath: "C:\\ws\\lesson5\\a.py", content: "print(1)" });
+    expect(d1.notices[0][0]).toContain("评审未通过");
+    expect(d1.notices[0][0]).toContain("边界未处理");
+    expect(d1.notices[0][1]).toBe(true);
+    const d2 = makeDeps("unreviewed");
+    await requestReview(d2.deps, { filePath: "C:\\ws\\lesson5\\a.py", content: "print(1)" });
+    expect(d2.notices[0][0]).toContain("未能完成评审");
+    expect(d2.notices[0][1]).toBe(false);
   });
-  it("unreviewed → 中性提示", async () => {
-    const { deps, notices } = makeDeps("unreviewed");
-    await requestReview(deps, { filePath: "x", content: `# exercise-id: ${ID}\nprint(1)` });
-    expect(notices[0][0]).toContain("未能完成评审");
-    expect(notices[0][1]).toBe(false);
+  it("服务端 404 → not-exercise 静默（无 notify 弹窗）", async () => {
+    const { deps, notices } = makeDeps("pass");
+    deps.fetchImpl = (async () => new Response("{}", { status: 404 })) as unknown as typeof fetch;
+    expect(await requestReview(deps, { filePath: "C:\\ws\\notes\\todo.py", content: "print(1)" })).toBe("not-exercise");
+    expect(notices).toHaveLength(0);
   });
-  it("项目：buildProjectSnapshot 命中 → payload 携带 files + code=入口", async () => {
+  it("非 git 仓库：getCommitHash 返回 \"\" → 请求仍发（commitHash: \"\"）", async () => {
     const { deps, posts } = makeDeps("pass");
-    deps.buildProjectSnapshot = async () => ({ exerciseId: ID, files: [{ path: "main.py", content: "M" }], entryContent: "M" });
-    await requestReview(deps, { filePath: "app/utils.py", content: "# u" });
-    const body = posts[0] as { files?: unknown[]; code?: string };
-    expect(body.files!.length).toBe(1);
-    expect(body.code).toBe("M");
+    deps.getCommitHash = async () => "";
+    await requestReview(deps, { filePath: "C:\\ws\\lesson5\\a.py", content: "print(1)" });
+    expect((posts[0] as { commitHash: string }).commitHash).toBe("");
   });
-  it("非练习文件 → not-exercise 静默；无身份 → identity-missing", async () => {
+  it("getCommitHash 抛错（非 git 仓库）→ 兜底 \"\"，请求仍发", async () => {
+    const { deps, posts } = makeDeps("pass");
+    deps.getCommitHash = async () => { throw new Error("not a git repo"); };
+    expect(await requestReview(deps, { filePath: "C:\\ws\\lesson5\\a.py", content: "print(1)" })).toBe("reviewed");
+    expect((posts[0] as { commitHash: string }).commitHash).toBe("");
+  });
+  it("项目题：files 快照随请求，code=入口内容", async () => {
+    const { deps, posts } = makeDeps("pass");
+    deps.buildProjectSnapshot = async () => ({ files: [{ path: "main.py", content: "M" }, { path: "utils.py", content: "u" }], entryContent: "M" });
+    await requestReview(deps, { filePath: "C:\\ws\\lesson5\\weather-app\\utils.py", content: "# u" });
+    const body = posts[0] as { files?: unknown[]; code?: string; filePath: string };
+    expect(body.files!.length).toBe(2);
+    expect(body.code).toBe("M");
+    expect(body.filePath).toBe("lesson5/weather-app/utils.py");
+  });
+  it("无身份 → identity-missing（不发请求）", async () => {
+    const { deps, posts } = makeDeps("pass");
+    deps.getIdentity = () => ({ studentId: null, studentName: null });
+    expect(await requestReview(deps, { filePath: "C:\\ws\\lesson5\\a.py", content: "print(1)" })).toBe("identity-missing");
+    expect(posts).toHaveLength(0);
+  });
+  it("非 2xx（非 404）→ error；fetch 拒绝 → error", async () => {
     const d1 = makeDeps("pass");
-    expect(await requestReview(d1.deps, { filePath: "x", content: "print(1)" })).toBe("not-exercise");
+    d1.deps.fetchImpl = (async () => new Response("{}", { status: 500 })) as unknown as typeof fetch;
+    expect(await requestReview(d1.deps, { filePath: "C:\\ws\\lesson5\\a.py", content: "x" })).toBe("error");
     const d2 = makeDeps("pass");
-    d2.deps.getIdentity = () => ({ studentId: null, studentName: null });
-    expect(await requestReview(d2.deps, { filePath: "x", content: `# exercise-id: ${ID}\n` })).toBe("identity-missing");
+    d2.deps.fetchImpl = (async () => { throw new Error("network down"); }) as unknown as typeof fetch;
+    expect(await requestReview(d2.deps, { filePath: "C:\\ws\\lesson5\\a.py", content: "x" })).toBe("error");
   });
 });
 
@@ -71,34 +114,32 @@ describe("makeRunSuccessReviewer（F5 运行成功 → 自动评审）", () => {
     };
   }
 
-  it("payload.file 命中：readFile → POST /api/reviews/request → 评审通过回执", async () => {
+  it("payload.file 命中：readFile → POST 带 POSIX filePath + commitHash → 评审通过回执", async () => {
     const { deps, notices, posts, urls } = makeDeps("pass", "边界完整");
+    deps.workspaceRoot = () => "C:\\x";
     const reads: string[] = [];
     const reviewer = makeRunSuccessReviewer(deps, vscodeNone, async (p) => {
       reads.push(p);
-      return `# exercise-id: ${ID}\nprint(1)`;
+      return "print(1)";
     });
     await reviewer(makeEvent("C:\\x\\a.py"));
     expect(reads).toEqual(["C:\\x\\a.py"]);
     expect(urls[0]).toBe("http://t/api/reviews/request");
-    const body = posts[0] as { exerciseId: string; code: string };
-    expect(body.exerciseId).toBe(ID);
+    const body = posts[0] as { filePath: string; commitHash: string; code: string };
+    expect(body.filePath).toBe("a.py");
+    expect(body.commitHash).toBe("abc1234");
     expect(body.code).toContain("print(1)");
     expect(notices[0][0]).toContain("评审通过");
   });
 
-  it("无 payload.file → 活动编辑器兜底；非练习文件静默", async () => {
+  it("无 payload.file → 活动编辑器兜底发起评审", async () => {
     const { deps, notices, posts } = makeDeps("pass");
+    deps.workspaceRoot = () => "C:\\x";
     const vscode = { window: { activeTextEditor: { document: { uri: { fsPath: "C:\\x\\b.py" } } } } } as unknown as typeof import("vscode");
-    const reads: string[] = [];
-    const reviewer = makeRunSuccessReviewer(deps, vscode, async (p) => {
-      reads.push(p);
-      return "print(1)";
-    });
+    const reviewer = makeRunSuccessReviewer(deps, vscode, async () => "print(1)");
     await reviewer(makeEvent());
-    expect(reads).toEqual(["C:\\x\\b.py"]);
-    expect(posts).toHaveLength(0);
-    expect(notices).toHaveLength(0);
+    expect((posts[0] as { filePath: string }).filePath).toBe("b.py");
+    expect(notices[0][0]).toContain("评审通过");
   });
 
   it("fetch 拒绝 → error 静默，不向调用方抛出", async () => {
@@ -106,7 +147,7 @@ describe("makeRunSuccessReviewer（F5 运行成功 → 自动评审）", () => {
     deps.fetchImpl = (async () => {
       throw new Error("network down");
     }) as unknown as typeof fetch;
-    const reviewer = makeRunSuccessReviewer(deps, vscodeNone, async () => `# exercise-id: ${ID}\nprint(1)`);
+    const reviewer = makeRunSuccessReviewer(deps, vscodeNone, async () => "print(1)");
     await expect(reviewer(makeEvent("C:\\x\\a.py"))).resolves.toBeUndefined();
     expect(notices).toHaveLength(0);
   });

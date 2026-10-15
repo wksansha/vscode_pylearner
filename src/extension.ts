@@ -399,8 +399,13 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   };
   const buildProjectSnapshot = (filePath: string, content: string) =>
     buildProjectSnapshotImpl(snapshotDeps, filePath, content);
+  // F5 评审（spec 2.1）：filePath + commitHash 直连服务端；git rev-parse HEAD，非 git 仓库/失败 → ""
+  const reviewRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+  const reviewGit = reviewRoot ? createGitClient(reviewRoot) : null;
+  const getCommitHash = async (): Promise<string> => reviewGit ? (await reviewGit.run(["rev-parse", "HEAD"])).trim() : "";
   const reviewer = makeRunSuccessReviewer(
     { teacherUrl: identityDeps.teacherUrl, getIdentity, buildProjectSnapshot,
+      workspaceRoot: () => reviewRoot, getCommitHash,
       notify: (m, w) => void (w ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)) },
     vscode, readFile,
   );

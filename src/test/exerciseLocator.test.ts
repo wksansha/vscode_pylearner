@@ -1,13 +1,12 @@
 // src/test/exerciseLocator.test.ts
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { resolveExercise, readExerciseManifest } from "../submission/exerciseLocator";
+import { resolveProject, readExerciseManifest } from "../submission/exerciseLocator";
 
-const ID = "01234567-89ab-cdef-0123-456789abcdef";
 const root = path.join("C:", "ws");
 const files: Record<string, string> = {
-  [path.join(root, "week-03", "weather-app", "exercise.json")]: `{ "exerciseId": "${ID}", "entry": "main.py" }`,
-  [path.join(root, "week-03", "weather-app", "main.py")]: "# main",
+  [path.join(root, "lesson5", "weather-app", "exercise.json")]: `{ "entry": "main.py" }`,
+  [path.join(root, "lesson5", "weather-app", "main.py")]: "# main",
 };
 const deps = {
   rootFsPath: root,
@@ -15,34 +14,36 @@ const deps = {
   readFile: async (fsPath: string) => files[fsPath] ?? null,
 };
 
-describe("exerciseLocator", () => {
-  it("单文件：头部 id 直取，kind=file", async () => {
-    const r = await resolveExercise(deps, path.join(root, "week-03", "01.py"), `# exercise-id: ${ID}\nprint(1)`);
-    expect(r).toEqual({ exerciseId: ID, kind: "file" });
+describe("exerciseLocator（项目目录判定，学生端零练习识别）", () => {
+  it("项目目录内文件（含非入口 .py）→ entry + 项目目录绝对路径", async () => {
+    const r = await resolveProject(deps, path.join(root, "lesson5", "weather-app", "utils.py"));
+    expect(r).toEqual({ entry: "main.py", projectDirFsPath: path.join(root, "lesson5", "weather-app") });
   });
-  it("项目：当前文件（含非入口 .py）经 exercise.json 定位", async () => {
-    const r = await resolveExercise(deps, path.join(root, "week-03", "weather-app", "utils.py"), "def f(): pass");
-    expect(r).toEqual({ exerciseId: ID, kind: "project", entry: "main.py", projectDirFsPath: path.join(root, "week-03", "weather-app") });
+  it("manifest 合法 JSON 即项目标记：无 entry 缺省 main.py；数组 JSON → null；坏 JSON → null", async () => {
+    const obj = { ...deps, readFile: async () => `{}` };
+    expect(await readExerciseManifest(obj, path.join(root, "lesson5", "weather-app"))).toEqual({ entry: "main.py" });
+    const arr = { ...deps, readFile: async () => `[]` };
+    expect(await readExerciseManifest(arr, path.join(root, "lesson5", "weather-app"))).toBeNull();
+    const bad = { ...deps, readFile: async () => "not-json" };
+    expect(await readExerciseManifest(bad, path.join(root, "lesson5", "weather-app"))).toBeNull();
   });
-  it("manifest 缺 id / 非法 JSON / 无 manifest → null", async () => {
-    const bad = { ...deps, readFile: async () => `{ "entry": "main.py" }` };
-    expect(await resolveExercise(bad, path.join(root, "week-03", "weather-app", "utils.py"), "x")).toBeNull();
-    const bad2 = { ...deps, readFile: async () => "not-json" };
-    expect(await readExerciseManifest(bad2, path.join(root, "week-03", "weather-app"))).toBeNull();
+  it("目录缺 exercise.json → null", async () => {
     const none = { ...deps, readFile: async () => null };
-    expect(await resolveExercise(none, path.join(root, "week-03", "misc", "a.py"), "x")).toBeNull();
+    expect(await resolveProject(none, path.join(root, "lesson5", "misc", "a.py"))).toBeNull();
   });
-  it("非补零 week 目录名（week-5）→ 项目经 exercise.json 定位", async () => {
+  it("作业目录一级 .py → null（单文件题快照由服务端路径定位）", async () => {
+    expect(await resolveProject(deps, path.join(root, "lesson5", "01.py"))).toBeNull();
+  });
+  it("目录命名自由（week-5 旧约定退役）→ 照常定位", async () => {
     const files5 = {
-      ...files,
-      [path.join(root, "week-5", "weather-app", "exercise.json")]: `{ "exerciseId": "${ID}", "entry": "main.py" }`,
-      [path.join(root, "week-5", "weather-app", "main.py")]: "# main",
+      [path.join(root, "week-5", "weather-app", "exercise.json")]: `{ "exerciseId": "x", "entry": "main.py" }`,
     };
     const deps5 = { ...deps, readFile: async (fsPath: string) => files5[fsPath] ?? null };
-    const r = await resolveExercise(deps5, path.join(root, "week-5", "weather-app", "utils.py"), "def f(): pass");
-    expect(r).toEqual({ exerciseId: ID, kind: "project", entry: "main.py", projectDirFsPath: path.join(root, "week-5", "weather-app") });
+    const r = await resolveProject(deps5, path.join(root, "week-5", "weather-app", "utils.py"));
+    expect(r).toEqual({ entry: "main.py", projectDirFsPath: path.join(root, "week-5", "weather-app") });
   });
-  it("week 目录外的文件 → null", async () => {
-    expect(await resolveExercise(deps, path.join(root, "other", "a.py"), "x")).toBeNull();
+  it("workspace 根外 / 无根 → null", async () => {
+    expect(await resolveProject(deps, path.join("D:", "other", "a.py"))).toBeNull();
+    expect(await resolveProject({ ...deps, rootFsPath: "" }, path.join(root, "lesson5", "weather-app", "a.py"))).toBeNull();
   });
 });
