@@ -7,6 +7,9 @@ import { hasLocalChanges, syncToRemoteState } from "../../git/syncOps";
 interface Opts {
   status?: string;
   rebaseFail?: boolean;
+  abortFail?: boolean;
+  /** 当前分支（默认 student-2025001）；分支断言用例改为错误分支 */
+  branch?: string;
 }
 
 function makeRecorder(opts?: Opts) {
@@ -15,6 +18,7 @@ function makeRecorder(opts?: Opts) {
     calls.push([...args]);
     const c = args.join(" ");
     if (c === "status --porcelain") return { stdout: opts?.status ?? "", stderr: "" };
+    if (c === "rev-parse --abbrev-ref HEAD") return { stdout: opts?.branch ?? "student-2025001", stderr: "" };
     if (c.startsWith("stash push -u")) return { stdout: "", stderr: "" };
     if (c === "fetch origin") return { stdout: "", stderr: "" };
     if (c === "rebase origin/student-2025001") {
@@ -26,7 +30,10 @@ function makeRecorder(opts?: Opts) {
       }
       return { stdout: "", stderr: "" };
     }
-    if (c === "rebase --abort") return { stdout: "", stderr: "" };
+    if (c === "rebase --abort") {
+      if (opts?.abortFail) throw new Error("fatal: No rebase in progress?");
+      return { stdout: "", stderr: "" };
+    }
     if (c === "checkout student-2025001 -- .") return { stdout: "", stderr: "" };
     throw new Error(`no route for: git ${c}`);
   };
@@ -48,6 +55,24 @@ describe("hasLocalChanges（spec 4.5 ①）", () => {
 });
 
 describe("syncToRemoteState（spec 4.5 三步）", () => {
+  it("分支不匹配 → 抛错拒绝，不做任何 stash/fetch/rebase/checkout（spec 4.5 对齐 4.4 分支断言）", async () => {
+    const { calls, git } = makeRecorder({ branch: "student-9999" });
+
+    await expect(syncToRemoteState(git, "2025001")).rejects.toThrow("student-2025001");
+    expect(joined(calls)).toEqual(["rev-parse --abbrev-ref HEAD"]);   // 断言即止，零副作用
+  });
+
+  it("rebase 冲突且 abort 自身失败 → 仍返回 rebaseConflict 不外抛（新学生首用无 rebase 可中止）", async () => {
+    const { calls, git } = makeRecorder({ status: "", rebaseFail: true, abortFail: true });
+
+    const r = await syncToRemoteState(git, "2025001");
+
+    expect(r).toEqual({ kind: "rebaseConflict" });
+    const seq = joined(calls);
+    expect(seq[seq.length - 1]).toBe("rebase --abort");
+    expect(seq).not.toContain("checkout student-2025001 -- .");
+  });
+
   it("有未提交修改 → stash -u → fetch → rebase → checkout student-X -- .，stashed=true", async () => {
     const { calls, git } = makeRecorder({ status: " M week-01/a.py\n?? notes.md\n" });
 
@@ -55,11 +80,12 @@ describe("syncToRemoteState（spec 4.5 三步）", () => {
 
     expect(r).toEqual({ kind: "ok", stashed: true });
     const seq = joined(calls);
-    expect(seq[0]).toBe("status --porcelain");
-    expect(seq[1]).toContain("stash push -u");            // -m 备注含时间戳，前缀断言
-    expect(seq[2]).toBe("fetch origin");
-    expect(seq[3]).toBe("rebase origin/student-2025001");
-    expect(seq[4]).toBe("checkout student-2025001 -- .");
+    expect(seq[0]).toBe("rev-parse --abbrev-ref HEAD");   // 分支断言（4.4 语义）
+    expect(seq[1]).toBe("status --porcelain");
+    expect(seq[2]).toContain("stash push -u");            // -m 备注含时间戳，前缀断言
+    expect(seq[3]).toBe("fetch origin");
+    expect(seq[4]).toBe("rebase origin/student-2025001");
+    expect(seq[5]).toBe("checkout student-2025001 -- .");
   });
 
   it("无修改 → 跳过 stash 直接收敛+还原，stashed=false", async () => {
@@ -69,6 +95,7 @@ describe("syncToRemoteState（spec 4.5 三步）", () => {
 
     expect(r).toEqual({ kind: "ok", stashed: false });
     expect(joined(calls)).toEqual([
+      "rev-parse --abbrev-ref HEAD",
       "status --porcelain",
       "fetch origin",
       "rebase origin/student-2025001",
