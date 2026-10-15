@@ -11,6 +11,7 @@ interface Opts {
   status?: string;
   commitFail?: { stdout?: string; stderr?: string };
   rebaseFail?: boolean;
+  firstPush?: boolean;   // 首推场景：远端学生分支尚不存在（首次 push 才创建）
   pushFail?: boolean;
   notifyFail?: boolean;
   confirmDelete?: (n: number) => Promise<boolean>;
@@ -47,7 +48,25 @@ function makeDeps(opts?: Opts) {
     }
     if (c === "rebase --abort") return { stdout: "", stderr: "" };
     if (c === "rev-parse HEAD") return { stdout: "feedc0de\n", stderr: "" };
-    if (c === "rev-parse origin/student-2025001") return { stdout: "remote123\n", stderr: "" };
+    if (c === "rev-parse --verify origin/student-2025001") {
+      if (opts?.firstPush) {
+        const err = new Error("git exited with code 128") as Error & { stdout: string; stderr: string };
+        err.stdout = "";
+        err.stderr = "fatal: Invalid revision ref 'origin/student-2025001'";
+        throw err;
+      }
+      return { stdout: "remote123\n", stderr: "" };
+    }
+    if (c === "rev-parse origin/student-2025001") {
+      if (opts?.firstPush) {   // 首推：远端无分支 → 实现应走 ls-files 兜底
+        const err = new Error("git exited with code 128") as Error & { stdout: string; stderr: string };
+        err.stdout = "";
+        err.stderr = "fatal: Invalid revision ref 'origin/student-2025001'";
+        throw err;
+      }
+      return { stdout: "remote123\n", stderr: "" };
+    }
+    if (c === "ls-files") return { stdout: "week-01/a.py\n", stderr: "" };
     if (c === "diff --name-only remote123 HEAD") return { stdout: "week-01/a.py\n", stderr: "" };
     if (c.startsWith("push ")) {
       if (opts?.pushFail) {
@@ -79,7 +98,7 @@ function makeDeps(opts?: Opts) {
 const joined = (calls: string[][]) => calls.map((c) => c.join(" "));
 
 describe("submitAll", () => {
-  it("正常链路 → ok，git 严格按序：断言→status→add→commit→fetch→rebase→rev-parse→diff→push→notify", async () => {
+  it("正常链路 → ok，git 严格按序：断言→status→add→commit→fetch→守卫→rebase→rev-parse→diff→push→notify", async () => {
     const { deps, calls, notified } = makeDeps();
 
     const res = await submitAll(deps);
@@ -91,12 +110,37 @@ describe("submitAll", () => {
       "add -A",
       "commit -m submit: workspace by 2025001 张三 --author=2025001 张三 <2025001@classroom>",
       "fetch origin",
+      "rev-parse --verify origin/student-2025001",
       "rebase origin/student-2025001",
       "rev-parse HEAD",
       "rev-parse origin/student-2025001",
       "diff --name-only remote123 HEAD",
       "push https://2025001:tok@gitea.example/org/hw.git HEAD:refs/heads/student-2025001",
     ]);
+    expect(notified).toEqual([
+      { studentId: "2025001", studentName: "张三", commitHash: "feedc0de", files: ["week-01/a.py"], pushedAt: expect.any(Number) },
+    ]);
+  });
+
+  it("首推（远端学生分支不存在）→ 跳过 rebase + ls-files 全量清单 + push 创建远端分支 → ok", async () => {
+    const { deps, calls, notified } = makeDeps({ firstPush: true });
+
+    const res = await submitAll(deps);
+
+    expect(res).toEqual({ kind: "ok" });
+    expect(joined(calls)).toEqual([
+      "rev-parse --abbrev-ref HEAD",
+      "status --porcelain",
+      "add -A",
+      "commit -m submit: workspace by 2025001 张三 --author=2025001 张三 <2025001@classroom>",
+      "fetch origin",
+      "rev-parse --verify origin/student-2025001",
+      "rev-parse HEAD",
+      "rev-parse origin/student-2025001",
+      "ls-files",
+      "push https://2025001:tok@gitea.example/org/hw.git HEAD:refs/heads/student-2025001",
+    ]);
+    expect(joined(calls).some((c) => c.startsWith("rebase"))).toBe(false);
     expect(notified).toEqual([
       { studentId: "2025001", studentName: "张三", commitHash: "feedc0de", files: ["week-01/a.py"], pushedAt: expect.any(Number) },
     ]);

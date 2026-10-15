@@ -52,6 +52,7 @@ function archiveRoutes(opts?: { branch?: string; status?: string; nothingToCommi
         : undefined,
     },
     { match: cmd("fetch origin") },
+    { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "remote123\n" },   // 首推守卫：远端分支存在 → rebase 照常执行
     { match: cmd("rebase origin/student-2025001"), fail: opts?.rebaseFail ? { stderr: "CONFLICT (content)" } : undefined },
     { match: cmd("rebase --abort") },
     { match: cmd("rev-parse HEAD"), stdout: "feedc0de\n" },
@@ -211,6 +212,7 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
       "rev-parse --verify origin/student-2025002",
       "pull origin student-2025002",
       "fetch origin",
+      "rev-parse --verify origin/student-2025002",
       "rebase origin/student-2025002",
       "diff --diff-filter=A --name-only HEAD origin/main",
       "checkout origin/main -- week-04/new.py",

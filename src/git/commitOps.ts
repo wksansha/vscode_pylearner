@@ -41,11 +41,15 @@ export async function submitAll(deps: SubmitDeps): Promise<SubmitResult> {
     throw err;
   }
   await git.run(["fetch", "origin"]);
-  try {
-    await git.run(["rebase", `origin/${branch}`]);
-  } catch {
-    await git.run(["rebase", "--abort"]);
-    return { kind: "rebaseConflict" };
+  // 首推守卫：远端学生分支尚不存在（首次 push 才创建）→ 跳过 rebase（否则 invalid upstream 被误判为 rebaseConflict，首推永远失败）
+  const upstream = await git.run(["rev-parse", "--verify", `origin/${branch}`]).catch(() => "");
+  if (upstream.trim()) {
+    try {
+      await git.run(["rebase", `origin/${branch}`]);
+    } catch {
+      await git.run(["rebase", "--abort"]);
+      return { kind: "rebaseConflict" };
+    }
   }
   const commitHash = (await git.run(["rev-parse", "HEAD"])).trim();
   let files: string[] = [];
