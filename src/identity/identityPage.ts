@@ -35,7 +35,6 @@ export function identityErrorText(code: string): string {
 }
 
 let currentPanel: vscode.WebviewPanel | undefined;
-let lastOpenAt = 0;
 
 type IdentityContext = { globalState: KeyValueStore } & vscode.ExtensionContext;
 
@@ -116,22 +115,6 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
     }
   });
   currentPanel.onDidDispose(() => { currentPanel = undefined; });
-}
-
-/** 节流打开（A8）：未设身份期间由运行/提交触发，60s 一次；open 可注入（测试） */
-export function maybeOpenIdentityPage(
-  deps: IdentityPageDeps,
-  context: IdentityContext,
-  state: { studentId: string | null },
-  throttleMs = 60_000,
-  now: () => number = Date.now,
-  open: typeof openIdentityPage = openIdentityPage,
-): boolean {
-  if (state.studentId) return false;
-  if (now() - lastOpenAt < throttleMs) return false;
-  lastOpenAt = now();
-  open(deps, context);
-  return true;
 }
 
 const IDENTITY_HTML = `<!DOCTYPE html>
