@@ -43,7 +43,7 @@ export const DEFAULT_TEACHER_URL = "http://localhost:3000";
 // would copy it to the user's account otherwise).
 export const SECRET_KEYS = {
   llmApiKey: "pylearner.llm.apiKey",
-  gitToken: "pylearner.git.token",   // 学生专属 Gitea token（身份校验响应下发，spec 2.2）
+  gitSecret: "pylearner.git.secret",   // 学生 Gitea 密码（gitSecret，身份校验响应下发；git 操作「学号:密码」Basic 认证用）
   studentId: "pylearner.student.id",
   studentName: "pylearner.student.name",
   classId: "pylearner.student.classId",

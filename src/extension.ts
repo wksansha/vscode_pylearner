@@ -52,7 +52,7 @@ import { createGitClient, type GitClient } from "./git/gitClient";
 import { submitAll } from "./git/commitOps";
 import { pullNewOnly } from "./git/pullOps";
 import { hasLocalChanges, syncToRemoteState } from "./git/syncOps";
-import { remoteWithToken, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter } from "./git/gitEnv";
+import { remoteWithBasic, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter } from "./git/gitEnv";
 import { ensureStudentBranch } from "./git/branchOps";
 import { createAssignmentPanel } from "./views/assignmentPanel";
 import { makeRunSuccessReviewer } from "./submission/reviewRequester";
@@ -242,8 +242,9 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       void vscode.window.showWarningMessage("请先在身份页设置学号与姓名");
       return null;
     }
-    const token = await context.secrets.get(SECRET_KEYS.gitToken);
-    if (!token) {
+    const studentId = id.studentId;   // 闭包内不继承属性收窄，先捕获
+    const gitSecret = await context.secrets.get(SECRET_KEYS.gitSecret);
+    if (!gitSecret) {
       void vscode.window.showWarningMessage("请在右下角重新设置身份以领取 Git 凭证");
       return null;
     }
@@ -252,7 +253,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       void vscode.window.showWarningMessage("未配置课堂仓库地址（pylearner.gitRepoUrl），请联系教师");
       return null;
     }
-    const remote = () => remoteWithToken(repoUrl, token);
+    const remote = () => remoteWithBasic(repoUrl, studentId, gitSecret);
     let bootstrapped = false;
     if (!(await isGitWorkTree(root.uri.fsPath))) {
       // clone 要求空目录：仅含 .vscode（VS Code 自动生成）视为可初始化，其余提示学生换空文件夹
@@ -286,7 +287,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       }
     }
     const git = createGitClient(root.uri.fsPath);
-    // origin 刷新为当前学生 token：换机/换人后 fetch/pull 读取凭证跟随本人（push 用显式 URL，不依赖 origin）
+    // origin 刷新为当前学生凭证：换机/换人后 fetch/pull 读取凭证跟随本人（push 用显式 URL，不依赖 origin）
     await updateOriginUrl(git, remote()).catch(() => {});
     // F2：committer 身份写仓库 local config，跟随当前身份（机房 git 常无全局 user.name/email，
     // 换学号后在此同步刷新；失败不阻断命令流，commit 阶段有明确报错兜底）
@@ -325,7 +326,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
             git: env.git,
             studentId: oldId,
             studentName: old.studentName ?? oldId,
-            remoteWithToken: env.remote,
+            remoteWithBasic: env.remote,
             confirmDelete: confirmDeleteModal,
             notifyServer: (p) => postSubmissionNotify(identityDeps.teacherUrl, p),
             confirm: async ({ oldId: o, newId: n, count }) => {
@@ -440,7 +441,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
             git: env.git,
             studentId: id.studentId!,
             studentName: id.studentName ?? id.studentId!,
-            remoteWithToken: env.remote,
+            remoteWithBasic: env.remote,
             confirmDelete: confirmDeleteModal,
             notify: (p) => postSubmissionNotify(identityDeps.teacherUrl, p),
           }),
@@ -740,9 +741,9 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
             statusBar.tooltip = "身份校验失败（名册可能已更新），点击重新设置";
             openIdentityPage(identityDeps, context);
           } else {
-            // 静默补领 gitToken：学生换机/重建秘钥环后免手动重存身份
-            const body = await res.json().catch(() => ({})) as { gitToken?: string | null };
-            if (body.gitToken) await context.secrets.store(SECRET_KEYS.gitToken, body.gitToken);
+            // 静默补领 gitSecret：学生换机/重建秘钥环后免手动重存身份
+            const body = await res.json().catch(() => ({})) as { gitSecret?: string | null };
+            if (body.gitSecret) await context.secrets.store(SECRET_KEYS.gitSecret, body.gitSecret);
           }
         } catch {
           /* 服务器不可达：静默，下次再复核 */

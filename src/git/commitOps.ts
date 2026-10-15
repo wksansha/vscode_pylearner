@@ -15,7 +15,7 @@ export async function countLocalChanges(git: GitClient): Promise<number> {
 
 export interface SubmitDeps {
   git: GitClient; studentId: string; studentName: string;
-  remoteWithToken: () => string;
+  remoteWithBasic: () => string;
   confirmDelete?: (n: number) => Promise<boolean>;   // spec 4.4 第 2 步：删除检测确认
   notify: (p: { studentId: string; studentName: string; commitHash: string; files: string[]; pushedAt: number }) => Promise<void>;
 }
@@ -58,7 +58,7 @@ export async function submitAll(deps: SubmitDeps): Promise<SubmitResult> {
     files = (await git.run(["diff", "--name-only", before, "HEAD"])).split("\n").map((s) => s.trim()).filter(Boolean);
   } catch { /* 远端无分支（首推）→ 全量清单 */ files = (await git.run(["ls-files"])).split("\n").filter(Boolean); }
   try {
-    await git.run(["push", deps.remoteWithToken(), `HEAD:refs/heads/${branch}`]);
+    await git.run(["push", deps.remoteWithBasic(), `HEAD:refs/heads/${branch}`]);
   } catch {
     return { kind: "pushFailed" };
   }

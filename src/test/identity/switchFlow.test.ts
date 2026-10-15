@@ -90,7 +90,7 @@ function makeBeforeDeps(git: ReturnType<typeof createGitClient>, opts?: {
     git,
     studentId: "2025001",
     studentName: "张三",
-    remoteWithToken: () => "https://oauth2:tok@gitea.example/org/hw.git",
+    remoteWithBasic: () => "https://2025001:tok@gitea.example/org/hw.git",
     confirmDelete: opts?.confirmDelete,
     notifyServer: async (p) => { notified.push(p); },
     confirm: async (info) => { confirms.push(info); return !opts?.cancel; },
@@ -118,7 +118,7 @@ describe("archiveBeforeSwitch（阶段一：确认 + submitAll 归档）", () =>
     await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(true);
 
     expect(confirms).toEqual([{ oldId: "2025001", newId: "2025002", count: 2 }]);
-    expect(joined(rec.calls)).toContain("push https://oauth2:tok@gitea.example/org/hw.git HEAD:refs/heads/student-2025001");
+    expect(joined(rec.calls)).toContain("push https://2025001:tok@gitea.example/org/hw.git HEAD:refs/heads/student-2025001");
     expect(notified).toEqual([
       { studentId: "2025001", studentName: "张三", commitHash: "feedc0de", files: ["week-01/a.py", "notes.md"], pushedAt: expect.any(Number) },
     ]);

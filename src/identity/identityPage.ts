@@ -38,9 +38,9 @@ let currentPanel: vscode.WebviewPanel | undefined;
 
 type IdentityContext = { globalState: KeyValueStore } & vscode.ExtensionContext;
 
-/** 服务端下发的 gitToken 存 SecretStorage（与 llm.apiKey 同待遇，不落配置/日志；null/缺失 = 未开通，静默跳过） */
-async function storeGitToken(context: IdentityContext, token: string | null | undefined): Promise<void> {
-  if (token) await context.secrets.store(SECRET_KEYS.gitToken, token);
+/** 服务端下发的 gitSecret（学生 Gitea 密码）存 SecretStorage（与 llm.apiKey 同待遇，不落配置/日志；null/缺失 = 未开通，静默跳过） */
+async function storeGitSecret(context: IdentityContext, secret: string | null | undefined): Promise<void> {
+  if (secret) await context.secrets.store(SECRET_KEYS.gitSecret, secret);
 }
 
 export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContext): void {
@@ -65,7 +65,7 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ studentId, studentName }),
       });
-      const body = await res.json() as { ok?: boolean; studentName?: string; code?: string; gitToken?: string | null };
+      const body = await res.json() as { ok?: boolean; studentName?: string; code?: string; gitSecret?: string | null };
       if (res.ok && body.ok) {
         const identity = { studentId, studentName: body.studentName ?? studentName };
         // 一键换机：学号变化时先归档（旧身份），归档成功才保存新身份（时序见 switchFlow.ts）；
@@ -81,17 +81,17 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
               return;
             }
           }
-          // 归档成功后才存新 token：beforeSwitch 推旧分支必须用旧凭证（Gitea 分支保护按生隔离）
-          await storeGitToken(context, body.gitToken);
+          // 归档成功后才存新 gitSecret：beforeSwitch 推旧分支必须用旧凭证（Gitea 分支保护按生隔离）
+          await storeGitSecret(context, body.gitSecret);
           await saveStudentIdentity(context.globalState, identity);
           await flow.afterSwitch(identity.studentId);
         } else {
-          await storeGitToken(context, body.gitToken);   // 同学号重存 = 补领/刷新凭证
+          await storeGitSecret(context, body.gitSecret);   // 同学号重存 = 补领/刷新凭证
           await saveStudentIdentity(context.globalState, identity);   // A25：校验通过才保存（名册规范姓名）
         }
         currentPanel?.webview.postMessage({ type: "result", ok: true, message: `✅ 身份已保存：${identity.studentId} ${identity.studentName}` });
-        if (!body.gitToken) {
-          // 非阻断提示：提交/拉取/同步需要 token，其他功能（运行/评审/归档）不受影响
+        if (!body.gitSecret) {
+          // 非阻断提示：提交/拉取/同步需要 gitSecret，其他功能（运行/评审/归档）不受影响
           currentPanel?.webview.postMessage({
             type: "result", ok: false,
             message: "服务器尚未开通你的 Git 账户，提交/同步功能暂不可用，请联系教师",

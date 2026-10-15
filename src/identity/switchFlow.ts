@@ -29,7 +29,7 @@ export interface BeforeSwitchDeps {
   /** 旧身份（归档归属者，与保存新身份前的 globalState 一致） */
   studentId: string;
   studentName: string;
-  remoteWithToken: () => string;
+  remoteWithBasic: () => string;
   /** submitAll 删除确认透传（VS Code 模态；不传视为确认） */
   confirmDelete?: (n: number) => Promise<boolean>;
   /** push 成功后的服务端轻量通知（失败静默重试由扩展端包装） */
@@ -47,7 +47,7 @@ export async function archiveBeforeSwitch(deps: BeforeSwitchDeps, oldId: string,
   try {
     result = await submitAll({
       git: deps.git, studentId: deps.studentId, studentName: deps.studentName,
-      remoteWithToken: deps.remoteWithToken, confirmDelete: deps.confirmDelete, notify: deps.notifyServer,
+      remoteWithBasic: deps.remoteWithBasic, confirmDelete: deps.confirmDelete, notify: deps.notifyServer,
     });
   } catch (e) {
     deps.notify(`归档失败：${errMsg(e)}，身份未切换，可重试`, true);

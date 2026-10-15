@@ -139,19 +139,19 @@ describe("离线兜底：validate 请求失败 → 本地保存身份", () => {
   });
 });
 
-describe("gitToken 下发（spec 2.2：身份校验响应携带学生专属 Gitea token）", () => {
-  it("响应含 gitToken → 存入 secrets（key: pylearner.git.token），无额外提示", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitToken: "tok-abc123" }), { status: 200 }));
+describe("gitSecret 下发（身份校验响应携带学生 Gitea 密码，git Basic 认证用）", () => {
+  it("响应含 gitSecret → 存入 secrets（key: pylearner.git.secret），无额外提示", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitSecret: "tok-abc123" }), { status: 200 }));
     const { secrets } = await submit(makeDeps(fetchImpl), makeStore(), "2024001", "张三");
 
-    expect(secrets.stored.get("pylearner.git.token")).toBe("tok-abc123");
+    expect(secrets.stored.get("pylearner.git.secret")).toBe("tok-abc123");
     const h = await getHooks();
     const last = h.postMessage.mock.calls.at(-1)![0] as { ok: boolean; message: string };
     expect(last.ok).toBe(true);
     expect(last.message).toContain("身份已保存");
   });
 
-  it("响应无 gitToken → 不写 secrets，webview 提示未开通 Git 账户（非阻断）", async () => {
+  it("响应无 gitSecret → 不写 secrets，webview 提示未开通 Git 账户（非阻断）", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     const onSaved = vi.fn();
     const { secrets, h } = await submit(makeDeps(fetchImpl, onSaved), makeStore(), "2024001", "张三");
@@ -163,8 +163,8 @@ describe("gitToken 下发（spec 2.2：身份校验响应携带学生专属 Gite
     expect(onSaved).toHaveBeenCalled();   // 非阻断：身份照常保存
   });
 
-  it("gitToken 为 null → 同未开通处理", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitToken: null }), { status: 200 }));
+  it("gitSecret 为 null → 同未开通处理", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitSecret: null }), { status: 200 }));
     const { secrets, h } = await submit(makeDeps(fetchImpl), makeStore(), "2024001", "张三");
 
     expect(secrets.stored.size).toBe(0);
@@ -172,11 +172,11 @@ describe("gitToken 下发（spec 2.2：身份校验响应携带学生专属 Gite
     expect(last.message).toContain("服务器尚未开通你的 Git 账户");
   });
 
-  it("换机归档成功后才存新 token（beforeSwitch 推旧分支用旧凭证）", async () => {
+  it("换机归档成功后才存新 gitSecret（beforeSwitch 推旧分支用旧凭证）", async () => {
     const order: string[] = [];
     const store = makeStore();
     await store.update("pylearner.identity.studentId", "2025001");   // 旧身份
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitToken: "tok-B" }), { status: 200 }));
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitSecret: "tok-B" }), { status: 200 }));
     const deps: IdentityPageDeps = {
       ...makeDeps(fetchImpl),
       switchFlow: {
@@ -187,14 +187,14 @@ describe("gitToken 下发（spec 2.2：身份校验响应携带学生专属 Gite
     const { secrets } = await submit(deps, store, "2025002", "李四");
 
     expect(order).toEqual(["beforeSwitch", "afterSwitch"]);
-    expect(secrets.stored.get("pylearner.git.token")).toBe("tok-B");
+    expect(secrets.stored.get("pylearner.git.secret")).toBe("tok-B");
     expect(store.data.get("pylearner.identity.studentId")).toBe("2025002");
   });
 
   it("F1 首次设置身份（无旧身份）→ 不归档（beforeSwitch 不调），保存后仍走 afterSwitch 分支保障", async () => {
     const order: string[] = [];
     const store = makeStore();   // 无旧身份（oldId=null）
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitToken: "tok-A" }), { status: 200 }));
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitSecret: "tok-A" }), { status: 200 }));
     const deps: IdentityPageDeps = {
       ...makeDeps(fetchImpl),
       switchFlow: {
@@ -205,7 +205,7 @@ describe("gitToken 下发（spec 2.2：身份校验响应携带学生专属 Gite
     const { secrets } = await submit(deps, store, "2024001", "张三");
 
     expect(order).toEqual(["afterSwitch"]);   // 跳过归档，仍走分支保障
-    expect(secrets.stored.get("pylearner.git.token")).toBe("tok-A");
+    expect(secrets.stored.get("pylearner.git.secret")).toBe("tok-A");
     expect(store.data.get("pylearner.identity.studentId")).toBe("2024001");
     const h = await getHooks();
     const last = h.postMessage.mock.calls.at(-1)![0] as { ok: boolean; message: string };
@@ -216,7 +216,7 @@ describe("gitToken 下发（spec 2.2：身份校验响应携带学生专属 Gite
     const order: string[] = [];
     const store = makeStore();
     await store.update("pylearner.identity.studentId", "2025001");
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitToken: "tok-B" }), { status: 200 }));
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitSecret: "tok-B" }), { status: 200 }));
     const deps: IdentityPageDeps = {
       ...makeDeps(fetchImpl),
       switchFlow: {

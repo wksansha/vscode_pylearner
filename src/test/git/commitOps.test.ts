@@ -83,7 +83,7 @@ function makeDeps(opts?: Opts) {
     git: createGitClient("C:/ws", exec),
     studentId: "2025001",
     studentName: "张三",
-    remoteWithToken: () => "https://2025001:tok@gitea.example/org/hw.git",
+    remoteWithBasic: () => "https://2025001:tok@gitea.example/org/hw.git",
     confirmDelete: opts?.confirmDelete
       ? async (n: number) => { confirmCalls.push(n); return opts.confirmDelete!(n); }
       : undefined,

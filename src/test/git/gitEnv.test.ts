@@ -2,26 +2,26 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { remoteWithToken, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter } from "../../git/gitEnv";
+import { remoteWithBasic, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter } from "../../git/gitEnv";
 import type { ExecFn } from "../../git/gitClient";
 
 const okExec = (async () => ({ stdout: "", stderr: "" })) as unknown as ExecFn;
 const failExec = (async () => { throw new Error("ENOENT"); }) as unknown as ExecFn;
 
-describe("remoteWithToken", () => {
-  it("https URL 前缀替换为 oauth2 凭证形式", () => {
-    expect(remoteWithToken("https://gitea.example.com/org/hw.git", "tok123"))
-      .toBe("https://oauth2:tok123@gitea.example.com/org/hw.git");
+describe("remoteWithBasic", () => {
+  it("https URL 前缀替换为「学号:密码」Basic 凭证形式", () => {
+    expect(remoteWithBasic("https://gitea.example.com/org/hw.git", "2025001", "tok123"))
+      .toBe("https://2025001:tok123@gitea.example.com/org/hw.git");
   });
 
-  it("token 含特殊字符原样嵌入不转义", () => {
-    expect(remoteWithToken("https://gitea.example.com/org/hw.git", "a1b2+c3/d=~_x"))
-      .toBe("https://oauth2:a1b2+c3/d=~_x@gitea.example.com/org/hw.git");
+  it("密码含特殊字符原样嵌入不转义", () => {
+    expect(remoteWithBasic("https://gitea.example.com/org/hw.git", "2025001", "a1b2+c3/d=~_x"))
+      .toBe("https://2025001:a1b2+c3/d=~_x@gitea.example.com/org/hw.git");
   });
 
   it("只替换协议段的 ://，端口冒号不受影响", () => {
-    expect(remoteWithToken("https://gitea.example.com:8443/org/hw.git", "t"))
-      .toBe("https://oauth2:t@gitea.example.com:8443/org/hw.git");
+    expect(remoteWithBasic("https://gitea.example.com:8443/org/hw.git", "2025001", "t"))
+      .toBe("https://2025001:t@gitea.example.com:8443/org/hw.git");
   });
 });
 
