@@ -1,6 +1,18 @@
 import type { GitClient, GitError } from "./gitClient";
 import { assertCurrentBranch } from "./branchOps";
 
+/** porcelain 状态行删除检测（X=暂存区 Y=工作区，任一位为 D 即删除条目）。
+ * 覆盖 D␣/␣D/MD/AD 全部组合（Task 345 遗留缺口：旧正则 /(^| )D / 漏 MD = 暂存修改+工作区删除）。 */
+export function countDeleted(status: string): number {
+  return status.split("\n").filter((l) => l.length >= 2 && (l[0] === "D" || l[1] === "D")).length;
+}
+
+/** 工作区未提交变更条数（porcelain 非空行）——换机确认弹窗展示用 */
+export async function countLocalChanges(git: GitClient): Promise<number> {
+  const status = await git.run(["status", "--porcelain"]);
+  return status.split("\n").filter((l) => l.trim()).length;
+}
+
 export interface SubmitDeps {
   git: GitClient; studentId: string; studentName: string;
   remoteWithToken: () => string;
@@ -14,9 +26,9 @@ export async function submitAll(deps: SubmitDeps): Promise<SubmitResult> {
   const branch = `student-${studentId}`;
   if (!(await assertCurrentBranch(git, studentId))) return { kind: "branchMismatch" };
   const status = await git.run(["status", "--porcelain"]);
-  const deleted = status.split("\n").filter((l) => /(^| )D /.test(l));
-  if (deleted.length > 0) {
-    const ok = deps.confirmDelete ? await deps.confirmDelete(deleted.length) : true;
+  const deletedCount = countDeleted(status);
+  if (deletedCount > 0) {
+    const ok = deps.confirmDelete ? await deps.confirmDelete(deletedCount) : true;
     if (!ok) return { kind: "deleteCancelled" };
   }
   await git.run(["add", "-A"]);

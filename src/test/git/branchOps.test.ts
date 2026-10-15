@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createGitClient, type ExecFn } from "../../git/gitClient";
-import { ensureStudentBranch, assertCurrentBranch } from "../../git/branchOps";
+import { ensureStudentBranch, assertCurrentBranch, cleanIgnored, remoteStudentBranchExists } from "../../git/branchOps";
 
 // ── 分支保障：recorder 模式，fake exec 记录调用序列并按参数路由返回值 ──────
 
@@ -101,5 +101,25 @@ describe("assertCurrentBranch", () => {
       { match: cmd("rev-parse --abbrev-ref HEAD"), stdout: "main\n" },
     ]);
     await expect(assertCurrentBranch(git, "2025001")).resolves.toBe(false);
+  });
+});
+
+describe("cleanIgnored / remoteStudentBranchExists（spec 4.6 切换辅助）", () => {
+  it("cleanIgnored → clean -fdX", async () => {
+    const { calls, git } = makeRecorder([{ match: cmd("clean -fdX") }]);
+    await cleanIgnored(git);
+    expect(joined(calls)).toEqual(["clean -fdX"]);
+  });
+
+  it("远端学生分支存在 → true；rev-parse 失败 → false", async () => {
+    const exists = makeRecorder([
+      { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "a1b2c3d\n" },
+    ]);
+    await expect(remoteStudentBranchExists(exists.git, "2025001")).resolves.toBe(true);
+
+    const missing = makeRecorder([
+      { match: cmd("rev-parse --verify origin/student-2025002"), fail: { stderr: "fatal: ambiguous argument" } },
+    ]);
+    await expect(remoteStudentBranchExists(missing.git, "2025002")).resolves.toBe(false);
   });
 });

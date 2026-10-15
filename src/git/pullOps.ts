@@ -11,3 +11,8 @@ export async function pullNewOnly(git: GitClient, studentId: string): Promise<{ 
   await git.run(["commit", "-m", `pull: ${paths.length} new file(s) from main`]);
   return { pulled: paths };
 }
+
+/** 拉取远端学生分支最新提交（spec 4.6 切换第 3 步；远端分支不存在时由调用方先探测跳过） */
+export async function pullStudentBranch(git: GitClient, studentId: string): Promise<void> {
+  await git.run(["pull", "origin", `student-${studentId}`]);
+}

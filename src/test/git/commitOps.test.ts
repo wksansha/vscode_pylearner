@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createGitClient, type ExecFn } from "../../git/gitClient";
-import { submitAll, type SubmitDeps } from "../../git/commitOps";
+import { submitAll, countDeleted, type SubmitDeps } from "../../git/commitOps";
 
 // ── 提交原语：recorder 模式，按参数路由返回值，记录完整调用序列 ───────────
 
@@ -187,5 +187,34 @@ describe("submitAll", () => {
 
     expect(res).toEqual({ kind: "ok" });
     expect(notified).toHaveLength(0);
+  });
+
+  it("status 含 MD 条目（暂存修改+工作区删除）→ 同样触发删除确认（Task 345 缺口回归）", async () => {
+    const { deps, calls, confirmCalls } = makeDeps({
+      status: "MD week-02/old.py\n",
+      confirmDelete: async () => false,
+    });
+
+    const res = await submitAll(deps);
+
+    expect(res).toEqual({ kind: "deleteCancelled" });
+    expect(confirmCalls).toEqual([1]);
+    expect(joined(calls)).toEqual(["rev-parse --abbrev-ref HEAD", "status --porcelain"]);
+  });
+});
+
+describe("countDeleted（porcelain 删除检测，X/Y 任一位为 D）", () => {
+  it.each([
+    ["D  week-02/a.py\n", 1],      // 暂存删除
+    [" D week-02/a.py\n", 1],      // 工作区删除
+    ["MD week-01/a.py\n", 1],      // 暂存修改 + 工作区删除（旧正则漏检）
+    ["AD week-01/a.py\n", 1],      // 暂存新增 + 工作区删除
+    [" M week-01/a.py\n", 0],
+    ["A  week-01/new.py\n", 0],
+    ["?? notes.md\n", 0],
+    ["R  old.py -> new.py\n", 0],
+    ["D  a.py\n D b.py\nMD c.py\n M d.py\n", 3],
+  ])("%j → %i", (status, n) => {
+    expect(countDeleted(status)).toBe(n);
   });
 });
