@@ -190,6 +190,46 @@ describe("gitToken 下发（spec 2.2：身份校验响应携带学生专属 Gite
     expect(secrets.stored.get("pylearner.git.token")).toBe("tok-B");
     expect(store.data.get("pylearner.identity.studentId")).toBe("2025002");
   });
+
+  it("F1 首次设置身份（无旧身份）→ 不归档（beforeSwitch 不调），保存后仍走 afterSwitch 分支保障", async () => {
+    const order: string[] = [];
+    const store = makeStore();   // 无旧身份（oldId=null）
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitToken: "tok-A" }), { status: 200 }));
+    const deps: IdentityPageDeps = {
+      ...makeDeps(fetchImpl),
+      switchFlow: {
+        beforeSwitch: async () => { order.push("beforeSwitch"); return true; },
+        afterSwitch: async () => { order.push("afterSwitch"); },
+      },
+    };
+    const { secrets } = await submit(deps, store, "2024001", "张三");
+
+    expect(order).toEqual(["afterSwitch"]);   // 跳过归档，仍走分支保障
+    expect(secrets.stored.get("pylearner.git.token")).toBe("tok-A");
+    expect(store.data.get("pylearner.identity.studentId")).toBe("2024001");
+    const h = await getHooks();
+    const last = h.postMessage.mock.calls.at(-1)![0] as { ok: boolean; message: string };
+    expect(last.ok).toBe(true);
+  });
+
+  it("F1 归档语义保留：旧身份存在且学号变化时 beforeSwitch 失败仍中止切换", async () => {
+    const order: string[] = [];
+    const store = makeStore();
+    await store.update("pylearner.identity.studentId", "2025001");
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitToken: "tok-B" }), { status: 200 }));
+    const deps: IdentityPageDeps = {
+      ...makeDeps(fetchImpl),
+      switchFlow: {
+        beforeSwitch: async () => { order.push("beforeSwitch"); return false; },
+        afterSwitch: async () => { order.push("afterSwitch"); },
+      },
+    };
+    const { secrets } = await submit(deps, store, "2025002", "李四");
+
+    expect(order).toEqual(["beforeSwitch"]);   // 归档失败：不保存新身份、不走 afterSwitch
+    expect(secrets.stored.size).toBe(0);
+    expect(store.data.get("pylearner.identity.studentId")).toBe("2025001");
+  });
 });
 
 describe("identityErrorText（A25 文案逐字）", () => {

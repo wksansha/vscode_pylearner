@@ -52,7 +52,8 @@ import { createGitClient, type GitClient } from "./git/gitClient";
 import { submitAll } from "./git/commitOps";
 import { pullNewOnly } from "./git/pullOps";
 import { hasLocalChanges, syncToRemoteState } from "./git/syncOps";
-import { remoteWithToken, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl } from "./git/gitEnv";
+import { remoteWithToken, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter } from "./git/gitEnv";
+import { ensureStudentBranch } from "./git/branchOps";
 import { createAssignmentPanel } from "./views/assignmentPanel";
 import { makeRunSuccessReviewer } from "./submission/reviewRequester";
 import { buildProjectSnapshot as buildProjectSnapshotImpl } from "./submission/projectSnapshot";
@@ -252,6 +253,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       return null;
     }
     const remote = () => remoteWithToken(repoUrl, token);
+    let bootstrapped = false;
     if (!(await isGitWorkTree(root.uri.fsPath))) {
       // clone 要求空目录：仅含 .vscode（VS Code 自动生成）视为可初始化，其余提示学生换空文件夹
       const entries = await vscode.workspace.fs.readDirectory(root.uri).then(
@@ -275,6 +277,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
           { location: vscode.ProgressLocation.Notification, title: "正在初始化课堂仓库…" },
           () => bootstrapClone(root.uri.fsPath, remote())
         );
+        bootstrapped = true;
       } catch (e) {
         void vscode.window.showErrorMessage(
           `课堂仓库初始化失败：${e instanceof Error ? e.message : String(e)}`
@@ -285,6 +288,11 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     const git = createGitClient(root.uri.fsPath);
     // origin 刷新为当前学生 token：换机/换人后 fetch/pull 读取凭证跟随本人（push 用显式 URL，不依赖 origin）
     await updateOriginUrl(git, remote()).catch(() => {});
+    // F2：committer 身份写仓库 local config，跟随当前身份（机房 git 常无全局 user.name/email，
+    // 换学号后在此同步刷新；失败不阻断命令流，commit 阶段有明确报错兜底）
+    await configureCommitter(git, id.studentId).catch(() => {});
+    // F1：bootstrap 停在 main → 立即幂等保障学生分支（失败静默，命令体内的 ensure 再兜底）
+    if (bootstrapped) await ensureStudentBranch(git, id.studentId).catch(() => {});
     return { git, remote };
   }
   // 提交删除确认（spec 4.4 第 2 步）：提交按钮与一键换机归档共用
@@ -424,6 +432,8 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       const id = loadStudentIdentity(context.globalState);
       if (!id.studentId) return;   // sessionGate 已保证，类型收窄兜底
       try {
+        // F1：命令体入口幂等分支保障（新学生首用建分支 / 手动切走后拉回，防 branchMismatch 死路）
+        await ensureStudentBranch(env.git, id.studentId!);
         const r = await vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title: "正在提交作业…" },
           () => submitAll({
@@ -472,6 +482,8 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       const id = loadStudentIdentity(context.globalState);
       if (!id.studentId) return;
       try {
+        // F1：命令体入口幂等分支保障（先在自己分支上，再做只新增拉取）
+        await ensureStudentBranch(env.git, id.studentId!);
         const r = await vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title: "正在拉取作业…" },
           () => pullNewOnly(env.git, id.studentId!),
@@ -495,15 +507,17 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       if (!env) return;
       const id = loadStudentIdentity(context.globalState);
       if (!id.studentId) return;
-      if (await hasLocalChanges(env.git)) {
-        const pick = await vscode.window.showWarningMessage(
-          "未提交的修改已自动备份并将在工作区移除，继续？",
-          { modal: true },
-          "继续同步"
-        );
-        if (pick !== "继续同步") return;
-      }
       try {
+        // F1：命令体入口幂等分支保障（防旧版引导残留 main / 手动切走——分支断言前先回到自己分支）
+        await ensureStudentBranch(env.git, id.studentId!);
+        if (await hasLocalChanges(env.git)) {
+          const pick = await vscode.window.showWarningMessage(
+            "未提交的修改已自动备份并将在工作区移除，继续？",
+            { modal: true },
+            "继续同步"
+          );
+          if (pick !== "继续同步") return;
+        }
         const r = await vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title: "正在同步作业…" },
           () => syncToRemoteState(env.git, id.studentId!),

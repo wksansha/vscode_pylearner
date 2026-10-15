@@ -25,12 +25,15 @@ export async function syncToRemoteState(git: GitClient, studentId: string): Prom
   const dirty = (await git.run(["status", "--porcelain"])).trim().length > 0;
   if (dirty) await git.run(["stash", "push", "-u", "-m", `sync backup ${new Date().toISOString()}`]);
   await git.run(["fetch", "origin"]);
-  try {
-    await git.run(["rebase", `origin/${branch}`]);
-  } catch {
-    // abort 自身可能失败（如新学生首用远端分支不存在，本就无 rebase 可中止）→ 吞掉，避免掩盖冲突语义
-    await git.run(["rebase", "--abort"]).catch(() => {});
-    return { kind: "rebaseConflict" };
+  // 首用守卫：远端学生分支尚不存在（首次 push 才创建）→ 跳过 rebase（同 pullOps，防 invalid upstream 误报 rebaseConflict）
+  const upstream = await git.run(["rev-parse", "--verify", `origin/${branch}`]).catch(() => "");
+  if (upstream.trim()) {
+    try {
+      await git.run(["rebase", `origin/${branch}`]);
+    } catch {
+      await git.run(["rebase", "--abort"]).catch(() => {});
+      return { kind: "rebaseConflict" };
+    }
   }
   await git.run(["checkout", branch, "--", "."]);
   return { kind: "ok", stashed: dirty };

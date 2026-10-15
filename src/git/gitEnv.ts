@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { createGitClient, type ExecFn, type GitClient } from "./gitClient";
 
 const execFileAsync = promisify(execFile) as unknown as ExecFn;
@@ -40,9 +42,21 @@ export async function isGitWorkTree(cwd: string, exec: ExecFn = execFileAsync): 
 export async function bootstrapClone(cwd: string, url: string, exec: ExecFn = execFileAsync): Promise<void> {
   const git: GitClient = createGitClient(cwd, exec);
   await git.run(["init"]);
+  // 中文文件名不做 quote 转义：diff --name-only 清单与 checkout 路径可直用（转义会破坏文件清单匹配）
+  await git.run(["config", "core.quotepath", "false"]);
   await git.run(["remote", "add", "origin", url]);
   await git.run(["fetch", "origin"]);
   await git.run(["checkout", "-B", "main", "origin/main"]);
+  // spec 4.1：引导完成即写 .gitignore，防 __pycache__ 等缓存垃圾被 add -A 归档并触发删除检测噪音
+  fs.writeFileSync(path.join(cwd, ".gitignore"), "__pycache__/\n*.pyc\n.venv/\n", "utf8");
+}
+
+/** F2：committer 身份写仓库 local config——机房批量安装的 git 默认无全局 user.name/email，
+ * commit --author 只覆盖 author，committer 缺失时 git 拒绝提交（"Please tell me who you are"）。
+ * 跟随当前身份调用（bootstrap 后首次 + 身份页换学号后的每次 resolveGitEnv），幂等。 */
+export async function configureCommitter(git: GitClient, studentId: string): Promise<void> {
+  await git.run(["config", "user.name", studentId]);
+  await git.run(["config", "user.email", `${studentId}@classroom`]);
 }
 
 /** origin 指向刷新为带当前学生 token 的 URL（换机/换人后读取凭证跟随本人；origin 不存在时由调用方忽略失败） */

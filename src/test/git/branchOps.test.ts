@@ -86,6 +86,34 @@ describe("ensureStudentBranch", () => {
       "checkout student-2025001",
     ]);
   });
+
+  it("F1 幂等：同一入口重复调用 → 第二次不再建分支（branch 创建仅一次，checkout 可重复）", async () => {
+    const calls: string[][] = [];
+    let created = false;   // 模拟本地分支状态：首次 branch 创建后 --list 可见
+    const exec: ExecFn = async (_file, args) => {
+      calls.push([...args]);
+      const c = args.join(" ");
+      if (c === "fetch origin") return { stdout: "", stderr: "" };
+      if (c === "branch --list student-2025001") return { stdout: created ? "* student-2025001\n" : "", stderr: "" };
+      if (c === "rev-parse --verify origin/student-2025001") {
+        const err = new Error("git failed") as Error & { stdout: string; stderr: string };
+        err.stdout = ""; err.stderr = "fatal: ambiguous argument 'origin/student-2025001'";
+        throw err;   // 新学生首用：远端无分支
+      }
+      if (c === "branch student-2025001 origin/main") { created = true; return { stdout: "", stderr: "" }; }
+      if (c === "checkout student-2025001") return { stdout: "", stderr: "" };
+      throw new Error(`no route for: git ${c}`);
+    };
+    const git = createGitClient("C:/ws", exec);
+
+    await ensureStudentBranch(git, "2025001");
+    await ensureStudentBranch(git, "2025001");   // 命令体/入口重复保障（幂等）
+
+    const seq = joined(calls);
+    expect(seq.filter((c) => c === "branch student-2025001 origin/main")).toHaveLength(1);
+    expect(seq.filter((c) => c === "checkout student-2025001")).toHaveLength(2);
+    expect(seq.filter((c) => c.startsWith("rev-parse --verify"))).toHaveLength(1);   // 第二次走"本地已有"短路
+  });
 });
 
 describe("assertCurrentBranch", () => {

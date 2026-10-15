@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { remoteWithToken, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl } from "../../git/gitEnv";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { remoteWithToken, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter } from "../../git/gitEnv";
 import type { ExecFn } from "../../git/gitClient";
 
 const okExec = (async () => ({ stdout: "", stderr: "" })) as unknown as ExecFn;
@@ -44,35 +47,68 @@ describe("isGitWorkTree", () => {
 });
 
 describe("bootstrapClone（clone 要求空目录，.vscode-only 场景用 init+fetch+checkout 等价实现）", () => {
-  it("严格按序 init → remote add origin → fetch → checkout -B main origin/main", async () => {
-    const calls: string[][] = [];
-    const exec: ExecFn = async (_file, args) => { calls.push([...args]); return { stdout: "", stderr: "" }; };
+  it("严格按序 init → config core.quotepath → remote add origin → fetch → checkout -B main，并写 .gitignore（spec 4.1 / F3）", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pylearner-gitenv-"));
+    try {
+      const calls: string[][] = [];
+      const exec: ExecFn = async (_file, args) => { calls.push([...args]); return { stdout: "", stderr: "" }; };
 
-    await bootstrapClone("C:/ws", "https://oauth2:tok@gitea.example/org/hw.git", exec);
+      await bootstrapClone(dir, "https://oauth2:tok@gitea.example/org/hw.git", exec);
 
-    expect(calls.map((c) => c.join(" "))).toEqual([
-      "init",
-      "remote add origin https://oauth2:tok@gitea.example/org/hw.git",
-      "fetch origin",
-      "checkout -B main origin/main",
-    ]);
+      expect(calls.map((c) => c.join(" "))).toEqual([
+        "init",
+        "config core.quotepath false",   // 中文文件名不转义，diff --name-only 清单与 checkout 路径可直用
+        "remote add origin https://oauth2:tok@gitea.example/org/hw.git",
+        "fetch origin",
+        "checkout -B main origin/main",
+      ]);
+      expect(fs.readFileSync(path.join(dir, ".gitignore"), "utf8")).toBe("__pycache__/\n*.pyc\n.venv/\n");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
-  it("fetch 失败 → 抛错（引导失败由调用方提示，不落地半初始化状态之外的动作）", async () => {
-    const calls: string[][] = [];
-    const exec: ExecFn = async (_file, args) => {
-      calls.push([...args]);
-      if (args.join(" ") === "fetch origin") {
-        const err = new Error("git exited with code 128") as Error & { stdout: string; stderr: string };
-        err.stdout = "";
-        err.stderr = "fatal: unable to access: connection refused";
-        throw err;
-      }
-      return { stdout: "", stderr: "" };
-    };
+  it("fetch 失败 → 抛错且不写 .gitignore（引导失败由调用方提示，不落地半初始化状态之外的动作）", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pylearner-gitenv-"));
+    try {
+      const calls: string[][] = [];
+      const exec: ExecFn = async (_file, args) => {
+        calls.push([...args]);
+        if (args.join(" ") === "fetch origin") {
+          const err = new Error("git exited with code 128") as Error & { stdout: string; stderr: string };
+          err.stdout = "";
+          err.stderr = "fatal: unable to access: connection refused";
+          throw err;
+        }
+        return { stdout: "", stderr: "" };
+      };
 
-    await expect(bootstrapClone("C:/ws", "https://oauth2:tok@gitea.example/org/hw.git", exec)).rejects.toThrow();
-    expect(calls.map((c) => c.join(" "))).toEqual(["init", "remote add origin https://oauth2:tok@gitea.example/org/hw.git", "fetch origin"]);
+      await expect(bootstrapClone(dir, "https://oauth2:tok@gitea.example/org/hw.git", exec)).rejects.toThrow();
+      expect(calls.map((c) => c.join(" "))).toEqual([
+        "init",
+        "config core.quotepath false",
+        "remote add origin https://oauth2:tok@gitea.example/org/hw.git",
+        "fetch origin",
+      ]);
+      expect(fs.existsSync(path.join(dir, ".gitignore"))).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("configureCommitter（F2：机房批量安装的 git 默认无全局身份，commit --author 只覆盖 author，committer 缺失被 git 拒绝）", () => {
+  it("local config 写 user.name=学号 + user.email=学号@classroom，按序两条", async () => {
+    const calls: string[][] = [];
+    const exec: ExecFn = async (_file, args) => { calls.push([...args]); return { stdout: "", stderr: "" }; };
+    const { createGitClient } = await import("../../git/gitClient");
+
+    await configureCommitter(createGitClient("C:/ws", exec), "2025001");
+
+    expect(calls.map((c) => c.join(" "))).toEqual([
+      "config user.name 2025001",
+      "config user.email 2025001@classroom",
+    ]);
   });
 });
 

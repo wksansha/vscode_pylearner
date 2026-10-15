@@ -10,6 +10,8 @@ interface Opts {
   abortFail?: boolean;
   /** 当前分支（默认 student-2025001）；分支断言用例改为错误分支 */
   branch?: string;
+  /** 远端学生分支是否存在（默认存在；false = 新学生首用） */
+  remoteBranch?: boolean;
 }
 
 function makeRecorder(opts?: Opts) {
@@ -21,6 +23,14 @@ function makeRecorder(opts?: Opts) {
     if (c === "rev-parse --abbrev-ref HEAD") return { stdout: opts?.branch ?? "student-2025001", stderr: "" };
     if (c.startsWith("stash push -u")) return { stdout: "", stderr: "" };
     if (c === "fetch origin") return { stdout: "", stderr: "" };
+    if (c === "rev-parse --verify origin/student-2025001") {
+      if (opts?.remoteBranch === false) {
+        const err = new Error("git failed") as Error & { stdout: string; stderr: string };
+        err.stdout = ""; err.stderr = "fatal: ambiguous argument 'origin/student-2025001'";
+        throw err;
+      }
+      return { stdout: "remote123\n", stderr: "" };
+    }
     if (c === "rebase origin/student-2025001") {
       if (opts?.rebaseFail) {
         const err = new Error("git exited with code 1") as Error & { stdout: string; stderr: string };
@@ -84,8 +94,9 @@ describe("syncToRemoteState（spec 4.5 三步）", () => {
     expect(seq[1]).toBe("status --porcelain");
     expect(seq[2]).toContain("stash push -u");            // -m 备注含时间戳，前缀断言
     expect(seq[3]).toBe("fetch origin");
-    expect(seq[4]).toBe("rebase origin/student-2025001");
-    expect(seq[5]).toBe("checkout student-2025001 -- .");
+    expect(seq[4]).toBe("rev-parse --verify origin/student-2025001");   // upstream 存在守卫
+    expect(seq[5]).toBe("rebase origin/student-2025001");
+    expect(seq[6]).toBe("checkout student-2025001 -- .");
   });
 
   it("无修改 → 跳过 stash 直接收敛+还原，stashed=false", async () => {
@@ -98,9 +109,23 @@ describe("syncToRemoteState（spec 4.5 三步）", () => {
       "rev-parse --abbrev-ref HEAD",
       "status --porcelain",
       "fetch origin",
+      "rev-parse --verify origin/student-2025001",
       "rebase origin/student-2025001",
       "checkout student-2025001 -- .",
     ]);
+  });
+
+  it("新学生首用（远端学生分支不存在）→ 跳过 rebase 直接还原，不误报 rebaseConflict（upstream 存在守卫）", async () => {
+    const { calls, git } = makeRecorder({ status: "", remoteBranch: false });
+
+    const r = await syncToRemoteState(git, "2025001");
+
+    expect(r).toEqual({ kind: "ok", stashed: false });
+    const seq = joined(calls);
+    expect(seq).toContain("fetch origin");
+    expect(seq).not.toContain("rebase origin/student-2025001");
+    expect(seq).not.toContain("rebase --abort");
+    expect(seq[seq.length - 1]).toBe("checkout student-2025001 -- .");
   });
 
   it("rebase 冲突 → rebase --abort 后返回 rebaseConflict，不 checkout", async () => {

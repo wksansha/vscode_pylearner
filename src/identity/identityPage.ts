@@ -68,15 +68,18 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
       const body = await res.json() as { ok?: boolean; studentName?: string; code?: string; gitToken?: string | null };
       if (res.ok && body.ok) {
         const identity = { studentId, studentName: body.studentName ?? studentName };
-        // 一键换机：学号变化时先归档（旧身份），归档成功才保存新身份（时序见 switchFlow.ts）
+        // 一键换机：学号变化时先归档（旧身份），归档成功才保存新身份（时序见 switchFlow.ts）；
+        // F1 首次设置（oldId=null）：无旧身份可归档 → 跳过 beforeSwitch，直接保存并走 afterSwitch 分支保障
         const flow = deps.switchFlow;
         const oldId = loadStudentIdentity(context.globalState).studentId;
-        const isSwitch = flow !== undefined && oldId !== null && oldId !== identity.studentId;
+        const isSwitch = flow !== undefined && oldId !== identity.studentId;
         if (isSwitch && flow) {
-          const ok = await flow.beforeSwitch(oldId, identity.studentId);
-          if (!ok) {
-            currentPanel?.webview.postMessage({ type: "result", ok: false, message: "已取消或归档未完成，身份未切换，工作区已保留" });
-            return;
+          if (oldId !== null) {
+            const ok = await flow.beforeSwitch(oldId, identity.studentId);
+            if (!ok) {
+              currentPanel?.webview.postMessage({ type: "result", ok: false, message: "已取消或归档未完成，身份未切换，工作区已保留" });
+              return;
+            }
           }
           // 归档成功后才存新 token：beforeSwitch 推旧分支必须用旧凭证（Gitea 分支保护按生隔离）
           await storeGitToken(context, body.gitToken);
