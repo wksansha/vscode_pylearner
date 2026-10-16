@@ -54,6 +54,7 @@ export const SECRET_KEYS = {
 export const STATE_KEYS = {
   studentId: "pylearner.identity.studentId",
   studentName: "pylearner.identity.studentName",
+  gitRepoUrl: "pylearner.identity.gitRepoUrl",   // 服务端身份校验响应下发的课堂仓库地址（学生机零配置）
 } as const;
 
 export const MSG_TYPES = {

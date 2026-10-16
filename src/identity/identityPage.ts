@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { saveStudentIdentity, loadStudentIdentity, type KeyValueStore } from "./studentIdentity";
 import { studentDirName, UNKNOWN_DIR } from "../archive/identity";
-import { SECRET_KEYS } from "../constants";
+import { SECRET_KEYS, STATE_KEYS } from "../constants";
 
 /** 离线兜底前置检查：学号必须能作为本地目录名/服务器路径段，否则事件将落 unknown/ 永不归档（spec §4.1） */
 export function localIdErrorText(studentId: string): string | undefined {
@@ -65,7 +65,7 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ studentId, studentName }),
       });
-      const body = await res.json() as { ok?: boolean; studentName?: string; code?: string; gitSecret?: string | null };
+      const body = await res.json() as { ok?: boolean; studentName?: string; code?: string; gitSecret?: string | null; gitRepoUrl?: string };
       if (res.ok && body.ok) {
         const identity = { studentId, studentName: body.studentName ?? studentName };
         // 一键换机：学号变化时先归档（旧身份），归档成功才保存新身份（时序见 switchFlow.ts）；
@@ -89,6 +89,8 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
           await storeGitSecret(context, body.gitSecret);   // 同学号重存 = 补领/刷新凭证
           await saveStudentIdentity(context.globalState, identity);   // A25：校验通过才保存（名册规范姓名）
         }
+        // 服务端下发的课堂仓库地址缓存 globalState（学生机零配置；教师本机调试可用 settings pylearner.gitRepoUrl 覆盖）
+        if (body.gitRepoUrl) await context.globalState.update(STATE_KEYS.gitRepoUrl, body.gitRepoUrl);
         currentPanel?.webview.postMessage({ type: "result", ok: true, message: `✅ 身份已保存：${identity.studentId} ${identity.studentName}` });
         if (!body.gitSecret) {
           // 非阻断提示：提交/拉取/同步需要 gitSecret，其他功能（运行/评审/归档）不受影响

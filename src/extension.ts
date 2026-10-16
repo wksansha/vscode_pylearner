@@ -30,7 +30,7 @@ function setupStartupLogger() {
 setupStartupLogger();
 
 import * as vscode from "vscode";
-import { CMD_IDS, CONFIG_KEYS, DEFAULT_TEACHER_URL, SECRET_KEYS, VIEW_IDS } from "./constants";
+import { CMD_IDS, CONFIG_KEYS, DEFAULT_TEACHER_URL, SECRET_KEYS, STATE_KEYS, VIEW_IDS } from "./constants";
 import { L1Writer } from "./storage/l1Writer";
 import { ChatStore } from "./storage/chatStore";
 import { LlmRouter } from "./llm/router";
@@ -212,8 +212,10 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
 
   // —— 学生分支直连模型（spec 2026-10-15 §4）：git 运行环境解析 ——
   // 工作区 + 身份 + token + 仓库就绪缺一不可；任一缺失提示后返回 null，命令静默中止
+  // 仓库地址优先级：settings pylearner.gitRepoUrl（教师本机调试覆盖）> 服务端校验响应下发的缓存（学生机零配置）
   const gitRepoUrl = () =>
-    vscode.workspace.getConfiguration("pylearner").get<string>(CONFIG_KEYS.gitRepoUrl, "") || "";
+    vscode.workspace.getConfiguration("pylearner").get<string>(CONFIG_KEYS.gitRepoUrl, "") ||
+    (context.globalState.get<string>(STATE_KEYS.gitRepoUrl) ?? "");
   async function resolveGitEnv(): Promise<{ git: GitClient; remote: () => string } | null> {
     const root = vscode.workspace.workspaceFolders?.[0];
     if (!root) {
@@ -233,7 +235,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     }
     const repoUrl = gitRepoUrl();
     if (!repoUrl) {
-      void vscode.window.showWarningMessage("未配置课堂仓库地址（pylearner.gitRepoUrl），请联系教师");
+      void vscode.window.showWarningMessage("未获取到课堂仓库地址：服务端未下发且未配置 pylearner.gitRepoUrl，请联系教师");
       return null;
     }
     const remote = () => remoteWithBasic(repoUrl, studentId, gitSecret);
@@ -291,13 +293,42 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   const switchNotify = (m: string, warn: boolean) =>
     void (warn ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m));
 
+  // 新手引导（spec §6）：身份保存成功后自动拉取一次作业；无工作区时先引导选作业目录
+  //（updateWorkspaceFolders 加入避免窗口重载），选完即自动拉取
+  const autoPullAfterSave = async (): Promise<void> => {
+    if (!vscode.workspace.workspaceFolders?.length) {
+      const pick = await vscode.window.showInformationMessage(
+        "身份设置成功！最后一步：选择一个空文件夹作为你的作业目录，作业代码将存放在这里",
+        { modal: true },
+        "选择文件夹"
+      );
+      if (pick !== "选择文件夹") return;
+      const uris = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: "用作作业目录",
+        title: "选择作业目录（建议新建空文件夹）",
+      });
+      if (!uris?.length) return;
+      if (!vscode.workspace.updateWorkspaceFolders(0, 0, { uri: uris[0] })) return;
+    }
+    void vscode.commands.executeCommand(CMD_IDS.pullAssignments);
+  };
+
   // —— 作业系统装配（A25：身份页 + 一键换机）——
   const identityDeps = {
     teacherUrl: () =>
       vscode.workspace
         .getConfiguration("pylearner")
         .get<string>(CONFIG_KEYS.teacherUrl, DEFAULT_TEACHER_URL),
-    onSaved: () => { sessionGate?.markConfirmed(); },   // 保存成功 = 本人声明身份，会话内免再确认
+    onSaved: (identity: { studentId: string; studentName: string }) => {
+      sessionGate?.markConfirmed();   // 保存成功 = 本人声明身份，会话内免再确认
+      // 有 Git 凭证才自动拉取（离线兜底/未开通 Git 账户时跳过，避免刚提示「离线保存」又弹告警）
+      void context.secrets.get(SECRET_KEYS.gitSecret).then((secret) => {
+        if (secret) void autoPullAfterSave();
+      });
+    },
     // 一键换机（spec §4.6）：身份页校验通过且学号变化时触发，四段编排见 switchFlow.ts（全 git 原语）
     switchFlow: {
       beforeSwitch: async (oldId: string, newId: string) => {

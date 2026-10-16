@@ -30,16 +30,14 @@
     "views": {
       "pylearner-sidebar": [
         {
-          "type": "webview",
-          "id": "pylearner.chatView",
-          "name": "Chat"
-        }
-      ],
-      "debug": [
-        {
           "type": "tree",
           "id": "pylearner.assignmentPanel",
           "name": "课堂作业"
+        },
+        {
+          "type": "webview",
+          "id": "pylearner.chatView",
+          "name": "Chat"
         }
       ]
     },

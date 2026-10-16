@@ -232,6 +232,27 @@ describe("gitSecret 下发（身份校验响应携带学生 Gitea 密码，git B
   });
 });
 
+describe("gitRepoUrl 下发（身份校验响应携带课堂仓库地址，学生机零配置）", () => {
+  it("响应含 gitRepoUrl → 缓存 globalState（key: pylearner.identity.gitRepoUrl）", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true, gitSecret: "tok-abc", gitRepoUrl: "http://192.168.1.100:3001/classroom/exercises.git",
+    }), { status: 200 }));
+    const store = makeStore();
+    await submit(makeDeps(fetchImpl), store, "2024001", "张三");
+
+    expect(store.data.get("pylearner.identity.gitRepoUrl")).toBe("http://192.168.1.100:3001/classroom/exercises.git");
+  });
+
+  it("响应无 gitRepoUrl → 不写 globalState（身份照常保存）", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitSecret: "tok-abc" }), { status: 200 }));
+    const store = makeStore();
+    await submit(makeDeps(fetchImpl), store, "2024001", "张三");
+
+    expect(store.data.has("pylearner.identity.gitRepoUrl")).toBe(false);
+    expect(store.data.get("pylearner.identity.studentId")).toBe("2024001");
+  });
+});
+
 describe("identityErrorText（A25 文案逐字）", () => {
   it("四类错误码映射", () => {
     expect(identityErrorText("roster_empty")).toBe("教师尚未导入名册，请联系教员后再试");

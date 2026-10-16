@@ -24,4 +24,8 @@ webview-ui/tailwind.config.js
 out/eval-profile.cjs
 out/rebuild-profile.cjs
 out/*.js.map
+# 会话中间报告（不随扩展发布）
+*-report*.md
+*review-diff*.md
+final-review-ext.md
 *.vsix
