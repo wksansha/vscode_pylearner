@@ -81,7 +81,7 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
               // 学期更替（spec roster §3）：旧学号已不在名册 → 不归档（无凭证可归档），确认后清空工作区
               const ok = flow.semesterReset ? await flow.semesterReset(oldId, identity.studentId) : false;
               if (!ok) {
-                currentPanel?.webview.postMessage({ type: "result", ok: false, message: "已取消或重置未完成，身份未切换，工作区已保留" });
+                currentPanel?.webview.postMessage({ type: "result", ok: false, message: "已取消或重置未完成，身份未切换，工作区可能已回到主分支基线状态，可重试" });
                 return;
               }
             } else {
