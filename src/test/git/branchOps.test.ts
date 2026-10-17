@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createGitClient, type ExecFn } from "../../git/gitClient";
-import { ensureStudentBranch, assertCurrentBranch, cleanIgnored, remoteStudentBranchExists } from "../../git/branchOps";
+import { ensureStudentBranch, assertCurrentBranch, cleanIgnored, remoteStudentBranchExists, resetToMainBaseline } from "../../git/branchOps";
 
 // ── 分支保障：recorder 模式，fake exec 记录调用序列并按参数路由返回值 ──────
 
@@ -149,5 +149,24 @@ describe("cleanIgnored / remoteStudentBranchExists（spec 4.6 切换辅助）", 
       { match: cmd("rev-parse --verify origin/student-2025002"), fail: { stderr: "fatal: ambiguous argument" } },
     ]);
     await expect(remoteStudentBranchExists(missing.git, "2025002")).resolves.toBe(false);
+  });
+});
+
+describe("resetToMainBaseline（学期更替清空，spec roster §3.1）", () => {
+  it("fetch → reset --hard origin/main → clean -fdx -e .vscode（比换机 -fdX 更彻底，排除 .vscode 保留运行配置）", async () => {
+    const { calls, git } = makeRecorder([
+      { match: cmd("fetch origin") },
+      { match: cmd("reset --hard origin/main") },
+      { match: cmd("clean -fdx -e .vscode") },
+    ]);
+    await resetToMainBaseline(git);
+    expect(joined(calls)).toEqual(["fetch origin", "reset --hard origin/main", "clean -fdx -e .vscode"]);
+  });
+  it("reset 失败 → 上抛（调用方中止切换，不保存新身份，可重跑）", async () => {
+    const { git } = makeRecorder([
+      { match: cmd("fetch origin") },
+      { match: cmd("reset --hard origin/main"), fail: { stderr: "error: cannot reset" } },
+    ]);
+    await expect(resetToMainBaseline(git)).rejects.toThrow();
   });
 });

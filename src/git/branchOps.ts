@@ -27,3 +27,12 @@ export async function remoteStudentBranchExists(git: GitClient, studentId: strin
   const ref = await git.run(["rev-parse", "--verify", `origin/student-${studentId}`]).catch(() => "");
   return ref.trim().length > 0;
 }
+
+/** 学期更替清空（spec roster §3.1）：工作区回到 origin/main 全新基线。
+ * clean -fdx 含 ignored 缓存（比换机路径的 -fdX 更彻底，学期更替语义=全新电脑）；-e .vscode 排除保留运行配置。
+ * 未跟踪的学生自建文件将被清除——旧代码已在服务器分支归档，此语义已在确认弹窗向学生明示。 */
+export async function resetToMainBaseline(git: GitClient): Promise<void> {
+  await git.run(["fetch", "origin"]);
+  await git.run(["reset", "--hard", "origin/main"]);
+  await git.run(["clean", "-fdx", "-e", ".vscode"]);
+}
