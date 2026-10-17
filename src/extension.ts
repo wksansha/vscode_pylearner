@@ -47,7 +47,7 @@ import { createTraceArchiver } from "./archive/archiver";
 import { loadStudentIdentity, migrateLegacyIdentity } from "./identity/studentIdentity";
 import { openIdentityPage } from "./identity/identityPage";
 import { createSessionConfirmGate } from "./identity/sessionConfirm";
-import { archiveBeforeSwitch, refillAfterSwitch } from "./identity/switchFlow";
+import { archiveBeforeSwitch, refillAfterSwitch, semesterResetBeforeSwitch } from "./identity/switchFlow";
 import { createGitClient, type GitClient } from "./git/gitClient";
 import { submitAll } from "./git/commitOps";
 import { pullNewOnly } from "./git/pullOps";
@@ -360,6 +360,28 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         const env = await resolveGitEnv();
         if (!env) return;
         await refillAfterSwitch({ git: env.git, newStudentId: newId, notify: switchNotify });
+      },
+      // 学期更替（spec roster §3）：旧学号已不在名册 → 确认后清空工作区（不归档，修复无凭证死锁）
+      semesterReset: async (oldId: string, newId: string) => {
+        const env = await resolveGitEnv();
+        if (!env) return false;
+        return semesterResetBeforeSwitch(
+          {
+            git: env.git,
+            confirm: async ({ oldId: o, newId: n }) => {
+              const pick = await vscode.window.showWarningMessage(
+                `检测到学期更替：${o} 已不在当前名册。\n` +
+                `将把工作区清空重置为全新状态（未提交的本地修改将丢失，旧代码已在服务器分支归档），然后初始化 ${n} 的学习环境。`,
+                { modal: true },
+                "确认清空并切换"   // 隐式取消由 VS Code 模态框自动追加，不得显式再加取消按钮
+              );
+              return pick === "确认清空并切换";
+            },
+            notify: switchNotify,
+          },
+          oldId,
+          newId,
+        );
       },
     },
   };
