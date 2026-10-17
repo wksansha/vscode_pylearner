@@ -1,18 +1,20 @@
 /**
- * 教师端上报器
+ * 教师端上报器（spec §6.1）
  *
- * 将学生端的 diag/run L1 事件上报到教师端服务器。
- * 由 L1Writer.setTeacherReporter() 注入。
+ * 将 L1 TraceEvent 原样平铺上报（全 surface，服务端决定是否解释/进看板）。
+ * 由 L1Writer.setTeacherReporter() 注入。10s 超时；失败只打日志不重试
+ * （幂等与补传由归档通道承担）。
  */
 
 import type { TraceEvent } from "../events/types";
-import * as vscode from "vscode";
 
 export interface TeacherReporterDeps {
   teacherUrl: string;
   /** 每次上报时调用（而非激活时固化），学号/姓名修改后下一次上报立即生效 */
   getIdentity: () => { studentId: string | null; studentName: string | null; classId?: string };
 }
+
+const FETCH_TIMEOUT_MS = 10_000;
 
 export function createTeacherReporter(deps: TeacherReporterDeps) {
   const { teacherUrl } = deps;
@@ -25,111 +27,35 @@ export function createTeacherReporter(deps: TeacherReporterDeps) {
         console.log("[TeacherReporter] 身份未设置，跳过上报（本地 L1 照记）");
         return;
       }
-      const payload = buildPayload(event, identity);
-      if (!payload) return;
-
+      const body = {
+        id: event.id,
+        ts: event.ts,
+        surface: event.surface,
+        kind: event.kind,
+        payload: event.payload,
+        ...(event.session_id ? { session_id: event.session_id } : {}),
+        student_id: identity.studentId,
+        student_name: identity.studentName,
+        class_id: identity.classId || "default",
+      };
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
       try {
         const res = await fetch(teacherUrl + "/api/events", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(body),
+          signal: controller.signal,
         });
-
         if (!res.ok) {
-          console.warn(
-            `[TeacherReporter] 上报失败 (${res.status}):`,
-            await res.text().catch(() => "")
-          );
+          console.warn(`[TeacherReporter] 上报失败 (${res.status}):`, await res.text().catch(() => ""));
         }
       } catch (err) {
-        // 网络不可用时只打日志，不影响 L1 写入
+        // 网络不可用/超时只打日志，不影响 L1 写入
         console.warn("[TeacherReporter] 无法连接教师端:", err instanceof Error ? err.message : String(err));
+      } finally {
+        clearTimeout(timer);
       }
     },
   };
-}
-
-function buildPayload(
-  event: TraceEvent,
-  identity: { studentId: string | null; studentName: string | null; classId?: string }
-) {
-  const base = {
-    student_id: identity.studentId,
-    student_name: identity.studentName,
-    class_id: identity.classId || "default",
-    timestamp: event.ts,
-    event_type: event.surface, // "diag" | "run"
-  };
-
-  // diag 事件
-  if (event.surface === "diag") {
-    const p = event.payload as {
-      file?: string;
-      errors?: number;
-      warnings?: number;
-      samples?: string[];
-    };
-
-    if (!p.samples || p.samples.length === 0) return null;
-
-    // 如果没有错误（或警告数为0且错误数为0），不上报
-    if ((p.errors || 0) === 0 && (p.warnings || 0) === 0) return null;
-
-    return {
-      ...base,
-      raw_message: p.samples[0] || "",
-      samples: p.samples,
-      error_type: "DiagnosticError",
-      error_message: p.samples.join("; "),
-      file_path: p.file,
-    };
-  }
-
-  // run 事件（报错）
-  // run 成功也上报：服务端记为活动信号，区分「没在用」和「用得顺」（spec §11 差距 #2）
-  if (event.surface === "run" && event.kind === "execution_success") {
-    const p = event.payload as {
-      command?: string;
-      exit_code?: number;
-      file?: string;
-      source?: string;
-    };
-    return {
-      ...base,
-      raw_message: "run success",
-      error_type: "RunSuccess",
-      error_message: "",
-      command: p.command,
-      exit_code: 0,
-      file_path: p.file,
-      source: p.source,
-    };
-  }
-  if (event.surface === "run" && event.kind === "execution_error") {
-    const p = event.payload as {
-      error_type?: string;
-      error_message?: string;
-      command?: string;
-      exit_code?: number;
-      file?: string;
-      line?: number;
-      source?: string;
-    };
-
-    if (!p.error_type || !p.error_message) return null;
-
-    return {
-      ...base,
-      raw_message: p.error_message,
-      error_type: p.error_type,
-      error_message: p.error_message,
-      command: p.command,
-      exit_code: p.exit_code,
-      file_path: p.file,
-      line_no: p.line,
-      source: p.source,
-    };
-  }
-
-  return null;
 }
