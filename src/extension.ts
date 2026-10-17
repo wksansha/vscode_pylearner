@@ -370,8 +370,8 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
             git: env.git,
             confirm: async ({ oldId: o, newId: n }) => {
               const pick = await vscode.window.showWarningMessage(
-                `检测到学期更替：${o} 已不在当前名册。\n` +
-                `将把工作区清空重置为全新状态（未提交的本地修改将丢失，旧代码已在服务器分支归档），然后初始化 ${n} 的学习环境。`,
+                `检测到学期更替：${o} 已不在当前学期花名册中。\n` +
+                `切换身份将把本地作业目录清空并为 ${n} 初始化新学期环境：已推送的旧代码仍保留在服务器上原学号分支中，可随时找回；未提交的修改和未推送的提交将被清空且无法恢复。`,
                 { modal: true },
                 "确认清空并切换"   // 隐式取消由 VS Code 模态框自动追加，不得显式再加取消按钮
               );
