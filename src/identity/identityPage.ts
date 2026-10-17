@@ -21,6 +21,9 @@ export interface IdentityPageDeps {
   switchFlow?: {
     beforeSwitch: (oldId: string, newId: string) => Promise<boolean>;
     afterSwitch: (newId: string) => Promise<void>;
+    /** 学期更替（spec roster §3）：previousIdInRoster=false 时触发；确认+清空工作区。
+     * true=已清空可继续；false=中止。未接线时该分叉安全降级为中止（不误入归档死锁）。 */
+    semesterReset?: (oldId: string, newId: string) => Promise<boolean>;
   };
 }
 
@@ -59,29 +62,38 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
       return;
     }
     const doFetch = deps.fetchImpl ?? fetch;
+    // 先读旧身份：validate 请求携带 previousStudentId，服务端据此裁决 previousIdInRoster（spec roster §2）
+    const oldId = loadStudentIdentity(context.globalState).studentId;
     try {
       const res = await doFetch(`${deps.teacherUrl()}/api/identity/validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ studentId, studentName }),
+        body: JSON.stringify({ studentId, studentName, ...(oldId ? { previousStudentId: oldId } : {}) }),
       });
-      const body = await res.json() as { ok?: boolean; studentName?: string; code?: string; gitSecret?: string | null; gitRepoUrl?: string };
+      const body = await res.json() as { ok?: boolean; studentName?: string; code?: string; gitSecret?: string | null; previousIdInRoster?: boolean; gitRepoUrl?: string };
       if (res.ok && body.ok) {
         const identity = { studentId, studentName: body.studentName ?? studentName };
-        // 一键换机：学号变化时先归档（旧身份），归档成功才保存新身份（时序见 switchFlow.ts）；
-        // F1 首次设置（oldId=null）：无旧身份可归档 → 跳过 beforeSwitch，直接保存并走 afterSwitch 分支保障
         const flow = deps.switchFlow;
-        const oldId = loadStudentIdentity(context.globalState).studentId;
         const isSwitch = flow !== undefined && oldId !== identity.studentId;
         if (isSwitch && flow) {
           if (oldId !== null) {
-            const ok = await flow.beforeSwitch(oldId, identity.studentId);
-            if (!ok) {
-              currentPanel?.webview.postMessage({ type: "result", ok: false, message: "已取消或归档未完成，身份未切换，工作区已保留" });
-              return;
+            if (body.previousIdInRoster === false) {
+              // 学期更替（spec roster §3）：旧学号已不在名册 → 不归档（无凭证可归档），确认后清空工作区
+              const ok = flow.semesterReset ? await flow.semesterReset(oldId, identity.studentId) : false;
+              if (!ok) {
+                currentPanel?.webview.postMessage({ type: "result", ok: false, message: "已取消或重置未完成，身份未切换，工作区已保留" });
+                return;
+              }
+            } else {
+              // 现有一键换机：previousIdInRoster=true，或字段缺省（旧服务端向后兼容）
+              const ok = await flow.beforeSwitch(oldId, identity.studentId);
+              if (!ok) {
+                currentPanel?.webview.postMessage({ type: "result", ok: false, message: "已取消或归档未完成，身份未切换，工作区已保留" });
+                return;
+              }
             }
           }
-          // 归档成功后才存新 gitSecret：beforeSwitch 推旧分支必须用旧凭证（Gitea 分支保护按生隔离）
+          // 归档/清空成功后才存新 gitSecret（beforeSwitch 推旧分支必须用旧凭证）
           await storeGitSecret(context, body.gitSecret);
           await saveStudentIdentity(context.globalState, identity);
           await flow.afterSwitch(identity.studentId);

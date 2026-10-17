@@ -261,3 +261,113 @@ describe("identityErrorText（A25 文案逐字）", () => {
     expect(identityErrorText("whatever")).toBe("校验失败，请稍后重试");
   });
 });
+
+describe("三分叉切换（spec roster §3：名册感知）", () => {
+  it("旧身份存在时 validate 请求体携带 previousStudentId", async () => {
+    const store = makeStore();
+    await store.update("pylearner.identity.studentId", "2025001");
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitSecret: "tok-A" }), { status: 200 }));
+    await submit(makeDeps(fetchImpl), store, "2025001", "张三");   // 同学号重存也带
+    expect((fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0][1].body).toBe(
+      JSON.stringify({ studentId: "2025001", studentName: "张三", previousStudentId: "2025001" }));
+  });
+
+  it("previousIdInRoster=false → semesterReset → 保存新身份 → afterSwitch（不触碰 beforeSwitch 归档）", async () => {
+    const order: string[] = [];
+    const store = makeStore();
+    await store.update("pylearner.identity.studentId", "2025001");   // 旧学号（已不在名册）
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ ok: true, gitSecret: "tok-B", previousIdInRoster: false }), { status: 200 }));
+    const deps: IdentityPageDeps = {
+      ...makeDeps(fetchImpl),
+      switchFlow: {
+        beforeSwitch: async () => { order.push("beforeSwitch"); return true; },
+        afterSwitch: async () => { order.push("afterSwitch"); },
+        semesterReset: async () => { order.push("semesterReset"); return true; },
+      },
+    };
+    const { secrets } = await submit(deps, store, "2026001", "李四");
+
+    expect(order).toEqual(["semesterReset", "afterSwitch"]);   // 死锁修复：不再走 beforeSwitch 归档
+    expect(secrets.stored.get("pylearner.git.secret")).toBe("tok-B");
+    expect(store.data.get("pylearner.identity.studentId")).toBe("2026001");
+    const h = await getHooks();
+    const last = h.postMessage.mock.calls.at(-1)![0] as { ok: boolean; message: string };
+    expect(last.ok).toBe(true);
+  });
+
+  it("previousIdInRoster=false + semesterReset 返回 false → 中止：身份不保存、不走 afterSwitch", async () => {
+    const order: string[] = [];
+    const store = makeStore();
+    await store.update("pylearner.identity.studentId", "2025001");
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ ok: true, gitSecret: "tok-B", previousIdInRoster: false }), { status: 200 }));
+    const deps: IdentityPageDeps = {
+      ...makeDeps(fetchImpl),
+      switchFlow: {
+        beforeSwitch: async () => { order.push("beforeSwitch"); return true; },
+        afterSwitch: async () => { order.push("afterSwitch"); },
+        semesterReset: async () => { order.push("semesterReset"); return false; },
+      },
+    };
+    const { secrets } = await submit(deps, store, "2026001", "李四");
+
+    expect(order).toEqual(["semesterReset"]);
+    expect(secrets.stored.size).toBe(0);
+    expect(store.data.get("pylearner.identity.studentId")).toBe("2025001");   // 旧身份保留
+  });
+
+  it("previousIdInRoster=false 但 semesterReset 未接线 → 安全中止（不误入归档死锁）", async () => {
+    const order: string[] = [];
+    const store = makeStore();
+    await store.update("pylearner.identity.studentId", "2025001");
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ ok: true, gitSecret: "tok-B", previousIdInRoster: false }), { status: 200 }));
+    const deps: IdentityPageDeps = {
+      ...makeDeps(fetchImpl),
+      switchFlow: {
+        beforeSwitch: async () => { order.push("beforeSwitch"); return true; },
+        afterSwitch: async () => { order.push("afterSwitch"); },
+      },
+    };
+    await submit(deps, store, "2026001", "李四");
+    expect(order).toEqual([]);   // 中止，未保存
+    expect(store.data.get("pylearner.identity.studentId")).toBe("2025001");
+  });
+
+  it("previousIdInRoster=true → 现有一键换机（beforeSwitch 归档链路不变）", async () => {
+    const order: string[] = [];
+    const store = makeStore();
+    await store.update("pylearner.identity.studentId", "2025001");
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ ok: true, gitSecret: "tok-B", previousIdInRoster: true }), { status: 200 }));
+    const deps: IdentityPageDeps = {
+      ...makeDeps(fetchImpl),
+      switchFlow: {
+        beforeSwitch: async () => { order.push("beforeSwitch"); return true; },
+        afterSwitch: async () => { order.push("afterSwitch"); },
+        semesterReset: async () => { order.push("semesterReset"); return true; },
+      },
+    };
+    await submit(deps, store, "2025002", "李四");
+    expect(order).toEqual(["beforeSwitch", "afterSwitch"]);   // 正常换机不走清空
+  });
+
+  it("previousIdInRoster 缺省（旧服务端）→ 降级走 beforeSwitch（向后兼容）", async () => {
+    const order: string[] = [];
+    const store = makeStore();
+    await store.update("pylearner.identity.studentId", "2025001");
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ ok: true, gitSecret: "tok-B" }), { status: 200 }));   // 无该字段
+    const deps: IdentityPageDeps = {
+      ...makeDeps(fetchImpl),
+      switchFlow: {
+        beforeSwitch: async () => { order.push("beforeSwitch"); return true; },
+        afterSwitch: async () => { order.push("afterSwitch"); },
+        semesterReset: async () => { order.push("semesterReset"); return true; },
+      },
+    };
+    await submit(deps, store, "2025002", "李四");
+    expect(order).toEqual(["beforeSwitch", "afterSwitch"]);
+  });
+});
