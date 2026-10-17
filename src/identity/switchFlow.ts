@@ -15,7 +15,7 @@
  */
 import type { GitClient } from "../git/gitClient";
 import { submitAll, countLocalChanges, type SubmitResult } from "../git/commitOps";
-import { ensureStudentBranch, cleanIgnored, remoteStudentBranchExists } from "../git/branchOps";
+import { ensureStudentBranch, cleanIgnored, remoteStudentBranchExists, resetToMainBaseline } from "../git/branchOps";
 import { pullNewOnly, pullStudentBranch } from "../git/pullOps";
 
 export type NotifyFn = (msg: string, warn: boolean) => void;
@@ -105,6 +105,25 @@ export async function refillAfterSwitch(deps: AfterSwitchDeps): Promise<void> {
     deps.notify(`同步新增作业失败：${errMsg(e)}，可执行「拉取作业」重试`, true);
   }
   deps.notify(`已切换工作区到 ${newStudentId}${added > 0 ? `：拉取新作业 ${added} 个文件` : "（暂无新作业）"}`, false);
+}
+
+export interface SemesterResetDeps {
+  git: GitClient;
+  confirm: (info: { oldId: string; newId: string }) => Promise<boolean>;
+  notify: NotifyFn;
+}
+
+/** 学期更替切换（spec roster §3 三分叉之一）：旧学号已不在名册 → 不走归档（旧身份无凭证可归档），
+ * 确认后清空工作区回 origin/main 基线。返回 false = 中止（用户取消或清空失败），调用方不得保存新身份。 */
+export async function semesterResetBeforeSwitch(deps: SemesterResetDeps, oldId: string, newId: string): Promise<boolean> {
+  if (!(await deps.confirm({ oldId, newId }))) return false;
+  try {
+    await resetToMainBaseline(deps.git);
+  } catch (e) {
+    deps.notify(`重置失败：${errMsg(e)}，身份未切换，可重试`, true);
+    return false;
+  }
+  return true;
 }
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   archiveBeforeSwitch,
   refillAfterSwitch,
+  semesterResetBeforeSwitch,
   type BeforeSwitchDeps,
   type AfterSwitchDeps,
 } from "../../identity/switchFlow";
@@ -280,5 +281,45 @@ describe("共用机场景（A → B 切换全链）", () => {
     expect(checkoutBIdx).toBeGreaterThan(pushIdx);
     expect(cleanIdx).toBeGreaterThan(checkoutBIdx);
     expect(seq).not.toContain("checkout student-2025001 -- .");  // 归档段不会还原工作区
+  });
+});
+
+// ── 学期更替三分叉：旧学号不在名册 → 清空工作区回 main 基线（spec roster §3）──
+describe("semesterResetBeforeSwitch（学期更替三分叉，spec roster §3）", () => {
+  function makeDeps(confirmResult: boolean, failOn?: string) {
+    const calls: string[][] = [];
+    const exec: ExecFn = async (_f, args) => {
+      calls.push([...args]);
+      if (failOn && args.join(" ") === failOn) throw new Error("git failed");
+      return { stdout: "", stderr: "" };
+    };
+    const confirmed: Array<{ oldId: string; newId: string }> = [];
+    const notes: string[] = [];
+    return {
+      calls, confirmed, notes,
+      deps: {
+        git: createGitClient("C:/ws", exec),
+        confirm: async (info) => { confirmed.push(info); return confirmResult; },
+        notify: (m: string, _warn: boolean) => { notes.push(m); },
+      } as Parameters<typeof semesterResetBeforeSwitch>[0],
+    };
+  }
+
+  it("确认 → 清空三连（fetch/reset/clean）→ true（调用方可保存新身份）", async () => {
+    const { calls, confirmed, deps } = makeDeps(true);
+    await expect(semesterResetBeforeSwitch(deps, "2025001", "2026001")).resolves.toBe(true);
+    expect(confirmed).toEqual([{ oldId: "2025001", newId: "2026001" }]);
+    expect(calls.map((c) => c.join(" "))).toEqual(["fetch origin", "reset --hard origin/main", "clean -fdx -e .vscode"]);
+  });
+  it("用户取消 → false，不执行任何 git 命令", async () => {
+    const { calls, deps } = makeDeps(false);
+    await expect(semesterResetBeforeSwitch(deps, "2025001", "2026001")).resolves.toBe(false);
+    expect(calls).toEqual([]);
+  });
+  it("reset 失败 → false + 告警提示可重试（中止，不保存新身份）", async () => {
+    const { calls, notes, deps } = makeDeps(true, "reset --hard origin/main");
+    await expect(semesterResetBeforeSwitch(deps, "2025001", "2026001")).resolves.toBe(false);
+    expect(calls.map((c) => c.join(" "))).toEqual(["fetch origin", "reset --hard origin/main"]);   // clean 未执行
+    expect(notes[0]).toContain("重置失败");
   });
 });
