@@ -63,6 +63,12 @@ export async function saveStudentIdentity(
   await state.update(STATE_KEYS.studentName, identity.studentName.trim());
 }
 
+/** 清除本机身份（模拟学生首启/共享电脑重置）：仅清 globalState；Git 凭证与 gitRepoUrl 缓存由调用方一并清理 */
+export async function clearStudentIdentity(state: KeyValueStore): Promise<void> {
+  await state.update(STATE_KEYS.studentId, undefined);
+  await state.update(STATE_KEYS.studentName, undefined);
+}
+
 /**
  * 一次性迁移：旧版本把身份写在 SecretStorage（SECRET_KEYS.student*），
  * 若 globalState 还没有值而 secrets 有，则拷贝过来（secrets 中的旧值保留不清理，无害）。

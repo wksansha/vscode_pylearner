@@ -7,6 +7,7 @@ export const CMD_IDS = {
   resetProfile: "pylearner.resetProfile",
   memoryGraph: "pylearner.memoryGraph",
   setStudentIdentity: "pylearner.setStudentIdentity",
+  devResetIdentity: "pylearner.dev.resetIdentity",   // 清除本机身份+凭证（模拟学生首启/机房重置）
   submitExercise: "pylearner.submitExercise",
   pullAssignments: "pylearner.pullAssignments",
   syncAssignments: "pylearner.syncAssignments",

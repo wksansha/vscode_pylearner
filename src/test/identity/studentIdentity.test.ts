@@ -3,6 +3,7 @@ import {
   loadStudentIdentity,
   hasStudentIdentity,
   saveStudentIdentity,
+  clearStudentIdentity,
   migrateLegacyIdentity,
   validateStudentId,
   validateStudentName,
@@ -49,6 +50,13 @@ describe("studentIdentity（存储/校验）", () => {
     expect(validateStudentName("")).toBeDefined();
     expect(validateStudentName("张三")).toBeUndefined();
     expect(validateStudentName("n".repeat(33))).toBeDefined();
+  });
+
+  it("清除后回到首启状态（loadStudentIdentity 为 null）", async () => {
+    const store = fakeStore({ [STATE_KEYS.studentId]: "20260101", [STATE_KEYS.studentName]: "张一" });
+    await clearStudentIdentity(store);
+    expect(loadStudentIdentity(store)).toEqual({ studentId: null, studentName: null });
+    expect(hasStudentIdentity(store)).toBe(false);
   });
 
   it("迁移：globalState 为空且 secrets 有值 → 拷贝；已有值 → 不动", async () => {

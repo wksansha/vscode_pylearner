@@ -44,7 +44,7 @@ import { ProfileRefresher } from "./commands/autoRefresh";
 import { registerMemoryGraphCommand } from "./commands/memoryGraph";
 import { createTeacherReporter } from "./teacher/reporter";
 import { createTraceArchiver } from "./archive/archiver";
-import { loadStudentIdentity, migrateLegacyIdentity } from "./identity/studentIdentity";
+import { loadStudentIdentity, migrateLegacyIdentity, clearStudentIdentity } from "./identity/studentIdentity";
 import { openIdentityPage } from "./identity/identityPage";
 import { createSessionConfirmGate } from "./identity/sessionConfirm";
 import { archiveBeforeSwitch, refillAfterSwitch, semesterResetBeforeSwitch } from "./identity/switchFlow";
@@ -423,6 +423,22 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     )
   );
   log("[pylearner] setStudentIdentity command registered");
+
+  // 开发/验收工具：清除本机身份与 Git 凭证，模拟学生首次打开 VS Code（模态确认防误触，确认后自动重载窗口）
+  context.subscriptions.push(
+    vscode.commands.registerCommand(CMD_IDS.devResetIdentity, async () => {
+      const pick = await vscode.window.showWarningMessage(
+        "将清除本机保存的课堂身份与 Git 凭证（用于模拟学生首次打开），清除后窗口自动重载。继续？",
+        { modal: true },
+        "清除并重载"   // 隐式取消由 VS Code 模态框自动追加
+      );
+      if (pick !== "清除并重载") return;
+      await clearStudentIdentity(context.globalState);
+      await context.globalState.update(STATE_KEYS.gitRepoUrl, undefined);
+      await context.secrets.delete(SECRET_KEYS.gitSecret);
+      await vscode.commands.executeCommand("workbench.action.reloadWindow");
+    })
+  );
 
   const readFile = async (fsPath: string): Promise<string | null> => {
     try {
