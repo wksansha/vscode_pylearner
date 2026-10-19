@@ -56,8 +56,8 @@ export class L1Writer {
     );
     await this.writeEvent(event);
 
-    // 异步上报到教师端（非阻塞，失败不影响 L1 持久化）
-    if (this.reporter && shouldReportToTeacher(surface, kind)) {
+    // 异步上报到教师端（非阻塞，失败不影响 L1 持久化；全 surface 均上报，spec §6.2）
+    if (this.reporter) {
       this.reporter.report(event).catch((err: unknown) => {
         console.warn("[L1Writer] 教师端上报失败:", err instanceof Error ? err.message : String(err));
       });
@@ -131,11 +131,4 @@ export class L1Writer {
       // 快照写失败下一条事件会再试
     }
   }
-}
-
-function shouldReportToTeacher(surface: Surface, kind: string): boolean {
-  return (
-    (surface === "diag" && kind === "diagnostics_change") ||
-    (surface === "run" && (kind === "execution_success" || kind === "execution_error"))
-  );
 }
