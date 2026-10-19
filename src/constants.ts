@@ -17,7 +17,6 @@ export const CMD_IDS = {
 export const VIEW_IDS = {
   sidebarContainer: "pylearner-sidebar",
   chatView: "pylearner.chatView",
-  assignmentPanel: "pylearner.assignmentPanel",
 } as const;
 
 export const CONFIG_KEYS = {
@@ -56,6 +55,7 @@ export const STATE_KEYS = {
   studentId: "pylearner.identity.studentId",
   studentName: "pylearner.identity.studentName",
   gitRepoUrl: "pylearner.identity.gitRepoUrl",   // 服务端身份校验响应下发的课堂仓库地址（学生机零配置）
+  onboardingPending: "pylearner.onboarding.pending",   // 新手引导续跑标记：选完作业目录整窗重载后，激活流程消费它补确认+自动拉取
 } as const;
 
 export const MSG_TYPES = {

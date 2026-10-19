@@ -44,23 +44,23 @@ export async function archiveBeforeSwitch(deps: BeforeSwitchDeps, oldId: string,
       remoteWithBasic: deps.remoteWithBasic, confirmDelete: deps.confirmDelete,
     });
   } catch (e) {
-    deps.notify(`归档失败：${errMsg(e)}，身份未切换，可重试`, true);
+    deps.notify(`保存失败：${errMsg(e)}，身份未切换，可重试`, true);
     return false;
   }
   switch (result.kind) {
     case "ok":
-      deps.notify(`已用 ${oldId} 提交归档当前工作区`, false);
+      deps.notify(`已保存 ${oldId} 的当前作业，服务器已留档`, false);
       return true;
     case "nothing":
-      deps.notify(`工作区无变更，${oldId} 无需归档`, false);
+      deps.notify("当前作业没有修改，无需保存", false);
       return true;
     case "deleteCancelled":
       return false;   // 用户主动取消删除确认，不再叠加提示
     case "branchMismatch":
-      deps.notify(`当前分支不是 student-${deps.studentId}，归档中止，身份未切换（请勿手动切换分支）`, true);
+      deps.notify(`本地作业目录与学号 ${deps.studentId} 不一致，保存中止，身份未切换（请勿手动切换分支）`, true);
       return false;
     case "rebaseConflict":
-      deps.notify("与你在其他电脑的提交冲突，归档中止，身份未切换，可重试", true);
+      deps.notify("与你在其他电脑保存的作业冲突，保存中止，身份未切换，可重试", true);
       return false;
     case "pushFailed":
       deps.notify("推送失败（可能断网），为防代码丢失已中止切换；联网后先执行「提交作业」再切换", true);
@@ -81,7 +81,7 @@ export async function refillAfterSwitch(deps: AfterSwitchDeps): Promise<void> {
   try {
     await ensureStudentBranch(git, newStudentId);
   } catch (e) {
-    deps.notify(`切换到 ${branch} 分支失败：${errMsg(e)}，可执行「同步作业」补救`, true);
+    deps.notify(`为 ${newStudentId} 准备作业目录失败：${errMsg(e)}，可执行「同步作业」补救`, true);
     return;
   }
   try {
@@ -94,7 +94,7 @@ export async function refillAfterSwitch(deps: AfterSwitchDeps): Promise<void> {
     try {
       await pullStudentBranch(git, newStudentId);
     } catch (e) {
-      deps.notify(`同步远端提交失败：${errMsg(e)}，可执行「同步作业」重试`, true);
+      deps.notify(`恢复你在服务器上的作业失败：${errMsg(e)}，可执行「同步作业」重试`, true);
       return;
     }
   }
@@ -104,7 +104,7 @@ export async function refillAfterSwitch(deps: AfterSwitchDeps): Promise<void> {
   } catch (e) {
     deps.notify(`同步新增作业失败：${errMsg(e)}，可执行「拉取作业」重试`, true);
   }
-  deps.notify(`已切换工作区到 ${newStudentId}${added > 0 ? `：拉取新作业 ${added} 个文件` : "（暂无新作业）"}`, false);
+  deps.notify(`已切换到 ${newStudentId} 的作业目录${added > 0 ? `：拉取新作业 ${added} 个文件` : "（暂无新作业）"}`, false);
 }
 
 export interface SemesterResetDeps {

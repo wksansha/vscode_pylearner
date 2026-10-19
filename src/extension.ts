@@ -53,8 +53,7 @@ import { submitAll } from "./git/commitOps";
 import { pullNewOnly } from "./git/pullOps";
 import { hasLocalChanges, syncToRemoteState } from "./git/syncOps";
 import { remoteWithBasic, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter } from "./git/gitEnv";
-import { ensureStudentBranch } from "./git/branchOps";
-import { createAssignmentPanel } from "./views/assignmentPanel";
+import { ensureStudentBranch, remoteStudentBranchExists } from "./git/branchOps";
 import { makeRunSuccessReviewer } from "./submission/reviewRequester";
 import { buildProjectSnapshot as buildProjectSnapshotImpl } from "./submission/projectSnapshot";
 
@@ -216,7 +215,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   const gitRepoUrl = () =>
     vscode.workspace.getConfiguration("pylearner").get<string>(CONFIG_KEYS.gitRepoUrl, "") ||
     (context.globalState.get<string>(STATE_KEYS.gitRepoUrl) ?? "");
-  async function resolveGitEnv(): Promise<{ git: GitClient; remote: () => string } | null> {
+  async function resolveGitEnv(): Promise<{ git: GitClient; remote: () => string; freshBootstrap: boolean } | null> {
     const root = vscode.workspace.workspaceFolders?.[0];
     if (!root) {
       void vscode.window.showWarningMessage("请先打开课堂文件夹（文件 → 打开文件夹）");
@@ -279,7 +278,10 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     await configureCommitter(git, id.studentId).catch(() => {});
     // F1：bootstrap 停在 main → 立即幂等保障学生分支（失败静默，命令体内的 ensure 再兜底）
     if (bootstrapped) await ensureStudentBranch(git, id.studentId).catch(() => {});
-    return { git, remote };
+    // 新学生首用（刚 bootstrap 且远端学生分支不存在）：工作区已停在 origin/main 基线，
+    // 后续增量拉取必为空转，调用方可据此跳过（老学生换机时远端分支存在，不置 true，增量拉取照常）
+    const freshBootstrap = bootstrapped && !(await remoteStudentBranchExists(git, id.studentId).catch(() => false));
+    return { git, remote, freshBootstrap };
   }
   // 提交删除确认（spec 4.4 第 2 步）：提交按钮与一键换机归档共用
   const confirmDeleteModal = async (n: number): Promise<boolean> => {
@@ -293,8 +295,6 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   const switchNotify = (m: string, warn: boolean) =>
     void (warn ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m));
 
-  // 新手引导（spec §6）：身份保存成功后自动拉取一次作业；无工作区时先引导选作业目录
-  //（updateWorkspaceFolders 加入避免窗口重载），选完即自动拉取。
   // 选完立即校验空目录（仅容忍 .vscode，与 resolveGitEnv 初始化规则一致），非空提示重选，避免拖到拉取阶段才报错
   const pickEmptyWorkspaceFolder = async (): Promise<vscode.Uri | undefined> => {
     for (;;) {
@@ -319,6 +319,11 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       if (retry !== "重新选择") return undefined;
     }
   };
+
+  // 新手引导（spec §6）：身份保存成功后自动拉取一次作业；无工作区时先引导选作业目录。
+  // 平台行为：空窗口加入首个工作区文件夹会重启扩展宿主（updateWorkspaceFolders 也不例外），
+  // 内存中的会话确认态与进行中的拉取全部丢失——因此选完目录用 openFolder 整窗重载（确定性路径），
+  // 先落 onboardingPending 标记，重载后由激活流程续跑（补会话确认 + 自动拉取），见下方首启检查。
   const autoPullAfterSave = async (): Promise<void> => {
     if (!vscode.workspace.workspaceFolders?.length) {
       const pick = await vscode.window.showInformationMessage(
@@ -329,7 +334,9 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       if (pick !== "选择文件夹") return;
       const folder = await pickEmptyWorkspaceFolder();
       if (!folder) return;
-      if (!vscode.workspace.updateWorkspaceFolders(0, 0, { uri: folder })) return;
+      await context.globalState.update(STATE_KEYS.onboardingPending, true);
+      await vscode.commands.executeCommand("vscode.openFolder", folder, { forceNewWindow: false });
+      return;   // 整窗重载后从激活流程续跑，本实例后续代码不再执行
     }
     void vscode.commands.executeCommand(CMD_IDS.pullAssignments);
   };
@@ -362,7 +369,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
             confirmDelete: confirmDeleteModal,
             confirm: async ({ oldId: o, newId: n, count }) => {
               const pick = await vscode.window.showInformationMessage(
-                `检测到身份切换：${o} → ${n}\n将先把当前工作区${count > 0 ? `的 ${count} 个变更` : ""}提交归档到 ${o} 的分支，再切换到 ${n} 的分支。`,
+                `检测到更换学号：${o} → ${n}\n将先保存当前作业${count > 0 ? `的 ${count} 处修改` : ""}到 ${o} 名下（服务器保留，可随时找回），然后把作业目录换成 ${n} 的内容。`,
                 { modal: true },
                 "继续切换"   // 隐式取消由 VS Code 模态框自动追加
               );
@@ -550,6 +557,12 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       if (!env) return;
       const id = loadStudentIdentity(context.globalState);
       if (!id.studentId) return;
+      // 新学生首用（freshBootstrap）：bootstrap 已 checkout origin/main 基线并建好学生分支，
+      // 增量拉取（ensure + fetch + diff）必为空转，直接提示就绪；换机（远端分支存在）照常走增量拉取
+      if (env.freshBootstrap) {
+        void vscode.window.showInformationMessage(`课堂仓库已初始化，作业已就绪（分支 student-${id.studentId}）`);
+        return;
+      }
       try {
         // F1：命令体入口幂等分支保障（先在自己分支上，再做只新增拉取）
         await ensureStudentBranch(env.git, id.studentId!);
@@ -603,10 +616,8 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     })
   );
 
-  // 「运行和调试」侧边栏「课堂作业」三按钮面板（spec §5.5）
-  context.subscriptions.push(
-    vscode.window.registerTreeDataProvider(VIEW_IDS.assignmentPanel, createAssignmentPanel())
-  );
+  // 课堂作业三入口已移至编辑器标题栏（editor/title，F5 旁；package.json menus），
+  // 侧边栏不再保留 tree 视图，Chat 独占整个 Python Learner 面板
 
   // Factory function - creates a fresh router with current config on demand
   const routerFactory = () => new LlmRouter();
@@ -795,6 +806,21 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         studentId: SECRET_KEYS.studentId,
         studentName: SECRET_KEYS.studentName,
       });
+      // 新手引导续跑：身份保存后选作业目录触发整窗重载，重启后在此恢复——
+      // 补会话确认（消除问号）+ 自动拉取。标记一次性消费，正常重启不带此标记，不影响共享电脑防误用确认。
+      if (context.globalState.get(STATE_KEYS.onboardingPending) === true) {
+        await context.globalState.update(STATE_KEYS.onboardingPending, undefined);
+        const pendingId = loadStudentIdentity(context.globalState);
+        if (pendingId.studentId) {
+          sessionGate?.markConfirmed();
+          if (vscode.workspace.workspaceFolders?.length) {
+            void vscode.commands.executeCommand(CMD_IDS.pullAssignments);
+          } else {
+            void autoPullAfterSave();   // 极少数：文件夹未随重载持久化，重新引导选择
+          }
+          return;
+        }
+      }
       const id = loadStudentIdentity(context.globalState);
       if (!id.studentId) {
         openIdentityPage(identityDeps, context);

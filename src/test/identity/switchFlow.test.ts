@@ -117,15 +117,15 @@ describe("archiveBeforeSwitch（阶段一：确认 + submitAll 归档）", () =>
 
     expect(confirms).toEqual([{ oldId: "2025001", newId: "2025002", count: 2 }]);
     expect(joined(rec.calls)).toContain("push https://2025001:tok@gitea.example/org/hw.git HEAD:refs/heads/student-2025001");
-    expect(messages).toEqual([{ warn: false, text: "已用 2025001 提交归档当前工作区" }]);
+    expect(messages).toEqual([{ warn: false, text: "已保存 2025001 的当前作业，服务器已留档" }]);
   });
 
-  it("工作区无变更（nothing to commit）→ true + 提示无需归档", async () => {
+  it("工作区无变更（nothing to commit）→ true + 提示无需保存", async () => {
     const rec = makeRecorder(archiveRoutes({ nothingToCommit: true }));
     const { deps, messages } = makeBeforeDeps(rec.git);
 
     await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(true);
-    expect(messages).toEqual([{ warn: false, text: "工作区无变更，2025001 无需归档" }]);
+    expect(messages).toEqual([{ warn: false, text: "当前作业没有修改，无需保存" }]);
   });
 
   it("用户取消确认 → false，不触发任何归档动作", async () => {
@@ -137,14 +137,14 @@ describe("archiveBeforeSwitch（阶段一：确认 + submitAll 归档）", () =>
     expect(messages).toHaveLength(0);
   });
 
-  it("分支不匹配（当前在 main）→ false + 警告（归档中止，身份未切换）", async () => {
+  it("分支不匹配（当前在 main）→ false + 警告（保存中止，身份未切换）", async () => {
     const rec = makeRecorder(archiveRoutes({ branch: "main" }));
     const { deps, messages } = makeBeforeDeps(rec.git);
 
     await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(false);
     expect(messages[0].warn).toBe(true);
-    expect(messages[0].text).toContain("归档中止");
-    expect(messages[0].text).toContain("student-2025001");
+    expect(messages[0].text).toContain("保存中止");
+    expect(messages[0].text).toContain("2025001");
   });
 
   it("push 失败 → false + 警告（防代码丢失，中止切换）", async () => {
@@ -181,7 +181,7 @@ describe("archiveBeforeSwitch（阶段一：确认 + submitAll 归档）", () =>
 
     await expect(archiveBeforeSwitch(deps, "2025001", "2025002")).resolves.toBe(false);
     expect(messages[0].warn).toBe(true);
-    expect(messages[0].text).toContain("归档失败");
+    expect(messages[0].text).toContain("保存失败");
   });
 });
 
@@ -209,7 +209,7 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
       "checkout origin/main -- week-04/new.py",
       "commit -m pull: 1 new file(s) from main",
     ]);
-    expect(messages).toEqual([{ warn: false, text: "已切换工作区到 2025002：拉取新作业 1 个文件" }]);
+    expect(messages).toEqual([{ warn: false, text: "已切换到 2025002 的作业目录：拉取新作业 1 个文件" }]);
   });
 
   it("新学生首用（远端无分支）→ 自 origin/main 建分支、跳过 pull、仍同步新增", async () => {
@@ -221,7 +221,7 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
     const seq = joined(rec.calls);
     expect(seq).toContain("branch student-2025002 origin/main");
     expect(seq).not.toContain("pull origin student-2025002");
-    expect(messages).toEqual([{ warn: false, text: "已切换工作区到 2025002（暂无新作业）" }]);
+    expect(messages).toEqual([{ warn: false, text: "已切换到 2025002 的作业目录（暂无新作业）" }]);
   });
 
   it("checkout 新分支失败（fetch 断网）→ 警告并停止（不动工作区）", async () => {
@@ -233,7 +233,7 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
     expect(joined(rec.calls)).toEqual(["fetch origin"]);
     expect(messages).toHaveLength(1);
     expect(messages[0].warn).toBe(true);
-    expect(messages[0].text).toContain("分支失败");
+    expect(messages[0].text).toContain("准备作业目录失败");
   });
 
   it("pull 远端提交失败 → 警告并停止（不再继续 pullNewOnly）", async () => {
@@ -246,7 +246,7 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
     expect(seq).toContain("pull origin student-2025002");
     expect(seq).not.toContain("diff --diff-filter=A --name-only HEAD origin/main");
     expect(messages[0].warn).toBe(true);
-    expect(messages[0].text).toContain("同步远端提交失败");
+    expect(messages[0].text).toContain("恢复你在服务器上的作业失败");
   });
 
   it("pullNewOnly 失败 → 警告 + 仍有汇总（分支已切换不回滚）", async () => {
@@ -257,7 +257,7 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
 
     expect(messages).toHaveLength(2);
     expect(messages[0]).toEqual({ warn: true, text: expect.stringContaining("同步新增作业失败") });
-    expect(messages[1]).toEqual({ warn: false, text: "已切换工作区到 2025002（暂无新作业）" });
+    expect(messages[1]).toEqual({ warn: false, text: "已切换到 2025002 的作业目录（暂无新作业）" });
   });
 });
 
