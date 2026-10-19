@@ -191,7 +191,7 @@ describe("gitSecret 下发（身份校验响应携带学生 Gitea 密码，git B
     expect(store.data.get("pylearner.identity.studentId")).toBe("2025002");
   });
 
-  it("F1 首次设置身份（无旧身份）→ 不归档（beforeSwitch 不调），保存后仍走 afterSwitch 分支保障", async () => {
+  it("F1 首次设置身份（无旧身份）→ 走普通保存分支：beforeSwitch/afterSwitch 均不调（新手引导由 onSaved→autoPull 承担）", async () => {
     const order: string[] = [];
     const store = makeStore();   // 无旧身份（oldId=null）
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, gitSecret: "tok-A" }), { status: 200 }));
@@ -204,7 +204,7 @@ describe("gitSecret 下发（身份校验响应携带学生 Gitea 密码，git B
     };
     const { secrets } = await submit(deps, store, "2024001", "张三");
 
-    expect(order).toEqual(["afterSwitch"]);   // 跳过归档，仍走分支保障
+    expect(order).toEqual([]);   // 首次不算切换：避免误触发 afterSwitch 的「请先打开课堂文件夹」警告
     expect(secrets.stored.get("pylearner.git.secret")).toBe("tok-A");
     expect(store.data.get("pylearner.identity.studentId")).toBe("2024001");
     const h = await getHooks();

@@ -294,7 +294,31 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     void (warn ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m));
 
   // 新手引导（spec §6）：身份保存成功后自动拉取一次作业；无工作区时先引导选作业目录
-  //（updateWorkspaceFolders 加入避免窗口重载），选完即自动拉取
+  //（updateWorkspaceFolders 加入避免窗口重载），选完即自动拉取。
+  // 选完立即校验空目录（仅容忍 .vscode，与 resolveGitEnv 初始化规则一致），非空提示重选，避免拖到拉取阶段才报错
+  const pickEmptyWorkspaceFolder = async (): Promise<vscode.Uri | undefined> => {
+    for (;;) {
+      const uris = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: "用作作业目录",
+        title: "选择作业目录（建议新建空文件夹）",
+      });
+      if (!uris?.length) return undefined;
+      const entries = await vscode.workspace.fs.readDirectory(uris[0]).then(
+        (e) => e,
+        () => [] as [string, vscode.FileType][],
+      );
+      if (entries.every(([name]) => name === ".vscode")) return uris[0];
+      const retry = await vscode.window.showWarningMessage(
+        "所选文件夹不是空的：作业目录需要是一个空文件夹（请新建一个空文件夹后重试）",
+        { modal: true },
+        "重新选择"
+      );
+      if (retry !== "重新选择") return undefined;
+    }
+  };
   const autoPullAfterSave = async (): Promise<void> => {
     if (!vscode.workspace.workspaceFolders?.length) {
       const pick = await vscode.window.showInformationMessage(
@@ -303,15 +327,9 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         "选择文件夹"
       );
       if (pick !== "选择文件夹") return;
-      const uris = await vscode.window.showOpenDialog({
-        canSelectFiles: false,
-        canSelectFolders: true,
-        canSelectMany: false,
-        openLabel: "用作作业目录",
-        title: "选择作业目录（建议新建空文件夹）",
-      });
-      if (!uris?.length) return;
-      if (!vscode.workspace.updateWorkspaceFolders(0, 0, { uri: uris[0] })) return;
+      const folder = await pickEmptyWorkspaceFolder();
+      if (!folder) return;
+      if (!vscode.workspace.updateWorkspaceFolders(0, 0, { uri: folder })) return;
     }
     void vscode.commands.executeCommand(CMD_IDS.pullAssignments);
   };

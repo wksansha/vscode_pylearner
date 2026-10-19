@@ -74,7 +74,8 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
       if (res.ok && body.ok) {
         const identity = { studentId, studentName: body.studentName ?? studentName };
         const flow = deps.switchFlow;
-        const isSwitch = flow !== undefined && oldId !== identity.studentId;
+        // 首次设置（oldId=null）不算切换：走普通保存分支，避免误触发 afterSwitch 弹「请先打开课堂文件夹」
+        const isSwitch = flow !== undefined && oldId !== null && oldId !== identity.studentId;
         if (isSwitch && flow) {
           if (oldId !== null) {
             if (body.previousIdInRoster === false) {
