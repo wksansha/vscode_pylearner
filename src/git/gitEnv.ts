@@ -47,8 +47,12 @@ export async function bootstrapClone(cwd: string, url: string, exec: ExecFn = ex
   await git.run(["remote", "add", "origin", url]);
   await git.run(["fetch", "origin"]);
   await git.run(["checkout", "-B", "main", "origin/main"]);
-  // spec 4.1：引导完成即写 .gitignore，防 __pycache__ 等缓存垃圾被 add -A 归档并触发删除检测噪音
-  fs.writeFileSync(path.join(cwd, ".gitignore"), "__pycache__/\n*.pyc\n.venv/\n", "utf8");
+  // spec 4.1：引导完成即确保 .gitignore 存在，防 __pycache__ 等缓存垃圾被 add -A 归档并触发删除检测噪音。
+  // 已存在时（题库 main 自带）不得覆写——覆写会让 tracked 文件变"已修改"，后续拉取的 rebase 必被脏工作区拒绝
+  const gitignorePath = path.join(cwd, ".gitignore");
+  if (!fs.existsSync(gitignorePath)) {
+    fs.writeFileSync(gitignorePath, "__pycache__/\n*.pyc\n.venv/\n", "utf8");
+  }
 }
 
 /** F2：committer 身份写仓库 local config——机房批量安装的 git 默认无全局 user.name/email，

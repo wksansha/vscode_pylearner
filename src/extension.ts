@@ -563,6 +563,13 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         void vscode.window.showInformationMessage(`课堂仓库已初始化，作业已就绪（分支 student-${id.studentId}）`);
         return;
       }
+      // 脏工作区守卫：rebase 前置条件是工作区干净，未提交的已跟踪修改会让拉取被 git 直接拒绝。
+      // 只算已跟踪修改（?? 开头的未跟踪新文件不阻塞 rebase，不误伤题库 main 无 .gitignore 时引导写入的新文件）
+      const status = await env.git.run(["status", "--porcelain"]);
+      if (status.split("\n").some((l) => l.trim() && !l.startsWith("??"))) {
+        void vscode.window.showWarningMessage("你有未保存的作业修改，请先点击「提交作业」保存，再重新拉取");
+        return;
+      }
       try {
         // F1：命令体入口幂等分支保障（先在自己分支上，再做只新增拉取）
         await ensureStudentBranch(env.git, id.studentId!);

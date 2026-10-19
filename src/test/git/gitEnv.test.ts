@@ -68,6 +68,20 @@ describe("bootstrapClone（clone 要求空目录，.vscode-only 场景用 init+f
     }
   });
 
+  it("已存在 .gitignore（题库 main 自带）→ 不覆写（覆写会让 tracked 文件变已修改，拉取 rebase 被脏工作区拒绝）", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pylearner-gitenv-"));
+    try {
+      const exec: ExecFn = (async () => ({ stdout: "", stderr: "" })) as unknown as ExecFn;
+      fs.writeFileSync(path.join(dir, ".gitignore"), "# Python\n__pycache__/\n", "utf8");
+
+      await bootstrapClone(dir, "https://oauth2:tok@gitea.example/org/hw.git", exec);
+
+      expect(fs.readFileSync(path.join(dir, ".gitignore"), "utf8")).toBe("# Python\n__pycache__/\n");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("fetch 失败 → 抛错且不写 .gitignore（引导失败由调用方提示，不落地半初始化状态之外的动作）", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pylearner-gitenv-"));
     try {
