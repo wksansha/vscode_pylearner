@@ -66,9 +66,10 @@ function archiveRoutes(opts?: { branch?: string; status?: string; nothingToCommi
 function refillRoutes(opts?: { branchMissing?: boolean; pullFail?: boolean; newFiles?: string; newOnlyFail?: boolean }) {
   return [
     { match: cmd("fetch origin") },
-    { match: cmd("branch --list student-2025002") },
     { match: cmd("rev-parse --verify origin/student-2025002"), stdout: opts?.branchMissing ? "" : "a1b2c3d\n" },
-    { match: starts("branch student-2025002 origin/") },
+    { match: cmd("branch --list student-2025002") },
+    { match: cmd("branch --track student-2025002 origin/student-2025002") },
+    { match: cmd("branch --no-track student-2025002 origin/main") },
     { match: cmd("checkout student-2025002") },
     { match: cmd("clean -fdX") },
     { match: cmd("pull origin student-2025002"), fail: opts?.pullFail ? { stderr: "CONFLICT" } : undefined },
@@ -195,9 +196,9 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
 
     expect(joined(rec.calls)).toEqual([
       "fetch origin",
-      "branch --list student-2025002",
       "rev-parse --verify origin/student-2025002",
-      "branch student-2025002 origin/student-2025002",
+      "branch --list student-2025002",
+      "branch --track student-2025002 origin/student-2025002",
       "checkout student-2025002",
       "clean -fdX",
       "rev-parse --verify origin/student-2025002",
@@ -219,7 +220,7 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
     await refillAfterSwitch(deps);
 
     const seq = joined(rec.calls);
-    expect(seq).toContain("branch student-2025002 origin/main");
+    expect(seq).toContain("branch --no-track student-2025002 origin/main");
     expect(seq).not.toContain("pull origin student-2025002");
     expect(messages).toEqual([{ warn: false, text: "已切换到 2025002 的作业目录（暂无新作业）" }]);
   });

@@ -3,11 +3,24 @@ import type { GitClient } from "./gitClient";
 export async function ensureStudentBranch(git: GitClient, studentId: string): Promise<void> {
   const branch = `student-${studentId}`;
   await git.run(["fetch", "origin"]);
+  const remote = await git.run(["rev-parse", "--verify", `origin/${branch}`]).catch(() => "");
   const local = await git.run(["branch", "--list", branch]);
   if (!local.trim()) {
-    // 远端已有学生分支 → 基于它建（换电脑场景，保住历史）；否则自 origin/main 建（新学生首用）
-    const remote = await git.run(["rev-parse", "--verify", `origin/${branch}`]).catch(() => "");
-    await git.run(["branch", branch, remote.trim() ? `origin/${branch}` : "origin/main"]);
+    // 远端已有学生分支 → 基于它建并显式 --track（换电脑场景，保住历史；不带 --track 会继承 main 的
+    //   upstream，裸 git pull / VS Code 同步按钮会把 main 合进学生分支）；
+    // 否则自 origin/main 建（新学生首用）且 --no-track——远端分支尚不存在，无可配对，宁缺勿错
+    await git.run(
+      remote.trim()
+        ? ["branch", "--track", branch, `origin/${branch}`]
+        : ["branch", "--no-track", branch, "origin/main"],
+    );
+  } else if (remote.trim()) {
+    // 存量工作区修复：旧版本建分支继承了 main 的配对（branch.<branch>.merge=refs/heads/main），
+    // 纠正为配对自己的远端分支（幂等：配对正确时零开销；缺省/配错均修复，防裸 pull 合入 main）
+    const mergeRef = (await git.run(["config", `branch.${branch}.merge`]).catch(() => "")).trim();
+    if (mergeRef !== `refs/heads/${branch}`) {
+      await git.run(["branch", "--set-upstream-to", `origin/${branch}`, branch]).catch(() => {});
+    }
   }
   await git.run(["checkout", branch]);
 }

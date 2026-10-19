@@ -31,32 +31,12 @@ const cmd = (s: string) => (args: string[]) => args.join(" ") === s;
 const joined = (calls: string[][]) => calls.map((c) => c.join(" "));
 
 describe("ensureStudentBranch", () => {
-  it("本地无 + 远端无 → 自 origin/main 建分支并 checkout（新学生首用）", async () => {
+  it("本地无 + 远端无 → 自 origin/main 建 --no-track 并 checkout（新学生首用；不配对 main 防裸 pull 合入教师分支）", async () => {
     const { calls, git } = makeRecorder([
       { match: cmd("fetch origin") },
-      { match: cmd("branch --list student-2025001") },
       { match: cmd("rev-parse --verify origin/student-2025001"), fail: { stderr: "fatal: ambiguous argument 'origin/student-2025001'" } },
-      { match: cmd("branch student-2025001 origin/main") },
-      { match: cmd("checkout student-2025001") },
-    ]);
-
-    await ensureStudentBranch(git, "2025001");
-
-    expect(joined(calls)).toEqual([
-      "fetch origin",
-      "branch --list student-2025001",
-      "rev-parse --verify origin/student-2025001",
-      "branch student-2025001 origin/main",
-      "checkout student-2025001",
-    ]);
-  });
-
-  it("本地无 + 远端有 → 基于 origin/student-X 建（换电脑场景，保住历史）", async () => {
-    const { calls, git } = makeRecorder([
-      { match: cmd("fetch origin") },
       { match: cmd("branch --list student-2025001") },
-      { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "a1b2c3d\n" },
-      { match: cmd("branch student-2025001 origin/student-2025001") },
+      { match: cmd("branch --no-track student-2025001 origin/main") },
       { match: cmd("checkout student-2025001") },
     ]);
 
@@ -64,17 +44,19 @@ describe("ensureStudentBranch", () => {
 
     expect(joined(calls)).toEqual([
       "fetch origin",
-      "branch --list student-2025001",
       "rev-parse --verify origin/student-2025001",
-      "branch student-2025001 origin/student-2025001",
+      "branch --list student-2025001",
+      "branch --no-track student-2025001 origin/main",
       "checkout student-2025001",
     ]);
   });
 
-  it("本地已有 → 不建分支直接 checkout（不触碰 rev-parse）", async () => {
+  it("本地无 + 远端有 → 基于 origin/student-X 建 --track（换电脑场景，保住历史且配对正确）", async () => {
     const { calls, git } = makeRecorder([
       { match: cmd("fetch origin") },
-      { match: cmd("branch --list student-2025001"), stdout: "* student-2025001\n" },
+      { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "a1b2c3d\n" },
+      { match: cmd("branch --list student-2025001") },
+      { match: cmd("branch --track student-2025001 origin/student-2025001") },
       { match: cmd("checkout student-2025001") },
     ]);
 
@@ -82,9 +64,46 @@ describe("ensureStudentBranch", () => {
 
     expect(joined(calls)).toEqual([
       "fetch origin",
+      "rev-parse --verify origin/student-2025001",
       "branch --list student-2025001",
+      "branch --track student-2025001 origin/student-2025001",
       "checkout student-2025001",
     ]);
+  });
+
+  it("本地已有 + 配对正确 → 只 checkout（幂等零开销，不做修复）", async () => {
+    const { calls, git } = makeRecorder([
+      { match: cmd("fetch origin") },
+      { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "a1b2c3d\n" },
+      { match: cmd("branch --list student-2025001"), stdout: "* student-2025001\n" },
+      { match: cmd("config branch.student-2025001.merge"), stdout: "refs/heads/student-2025001\n" },
+      { match: cmd("checkout student-2025001") },
+    ]);
+
+    await ensureStudentBranch(git, "2025001");
+
+    expect(joined(calls)).toEqual([
+      "fetch origin",
+      "rev-parse --verify origin/student-2025001",
+      "branch --list student-2025001",
+      "config branch.student-2025001.merge",
+      "checkout student-2025001",
+    ]);
+  });
+
+  it("存量修复：本地已有但 upstream 配错（继承 main）→ set-upstream-to 纠正为自己的远端分支", async () => {
+    const { calls, git } = makeRecorder([
+      { match: cmd("fetch origin") },
+      { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "a1b2c3d\n" },
+      { match: cmd("branch --list student-2025001"), stdout: "* student-2025001\n" },
+      { match: cmd("config branch.student-2025001.merge"), stdout: "refs/heads/main\n" },
+      { match: cmd("branch --set-upstream-to origin/student-2025001 student-2025001") },
+      { match: cmd("checkout student-2025001") },
+    ]);
+
+    await ensureStudentBranch(git, "2025001");
+
+    expect(joined(calls)).toContain("branch --set-upstream-to origin/student-2025001 student-2025001");
   });
 
   it("F1 幂等：同一入口重复调用 → 第二次不再建分支（branch 创建仅一次，checkout 可重复）", async () => {
@@ -100,7 +119,7 @@ describe("ensureStudentBranch", () => {
         err.stdout = ""; err.stderr = "fatal: ambiguous argument 'origin/student-2025001'";
         throw err;   // 新学生首用：远端无分支
       }
-      if (c === "branch student-2025001 origin/main") { created = true; return { stdout: "", stderr: "" }; }
+      if (c === "branch --no-track student-2025001 origin/main") { created = true; return { stdout: "", stderr: "" }; }
       if (c === "checkout student-2025001") return { stdout: "", stderr: "" };
       throw new Error(`no route for: git ${c}`);
     };
@@ -110,9 +129,9 @@ describe("ensureStudentBranch", () => {
     await ensureStudentBranch(git, "2025001");   // 命令体/入口重复保障（幂等）
 
     const seq = joined(calls);
-    expect(seq.filter((c) => c === "branch student-2025001 origin/main")).toHaveLength(1);
+    expect(seq.filter((c) => c === "branch --no-track student-2025001 origin/main")).toHaveLength(1);
     expect(seq.filter((c) => c === "checkout student-2025001")).toHaveLength(2);
-    expect(seq.filter((c) => c.startsWith("rev-parse --verify"))).toHaveLength(1);   // 第二次走"本地已有"短路
+    expect(seq.filter((c) => c.startsWith("rev-parse --verify"))).toHaveLength(2);   // 每次都探测远端（本地已有时不修复：远端无分支）
   });
 });
 
