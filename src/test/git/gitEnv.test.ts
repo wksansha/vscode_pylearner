@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { remoteWithBasic, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter } from "../../git/gitEnv";
+import { remoteWithBasic, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter, disableNativeGitUi } from "../../git/gitEnv";
 import type { ExecFn } from "../../git/gitClient";
 
 const okExec = (async () => ({ stdout: "", stderr: "" })) as unknown as ExecFn;
@@ -135,5 +135,58 @@ describe("updateOriginUrl", () => {
     await updateOriginUrl(createGitClient("C:/ws", exec), "https://oauth2:newtok@gitea.example/org/hw.git");
 
     expect(calls.map((c) => c.join(" "))).toEqual(["remote set-url origin https://oauth2:newtok@gitea.example/org/hw.git"]);
+  });
+});
+
+describe("disableNativeGitUi（工作区 settings.json 写 git.enabled=false，关闭内置 Git 扩展，摘掉切他人分支的便捷通道）", () => {
+  it("无 .vscode 目录 → 创建 settings.json 且仅含 git.enabled=false", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pylearner-gitenv-"));
+
+    disableNativeGitUi(dir);
+
+    const written = JSON.parse(fs.readFileSync(path.join(dir, ".vscode", "settings.json"), "utf8"));
+    expect(written).toEqual({ "git.enabled": false });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("已有其他配置 → 合并保留，git.enabled 强制 false", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pylearner-gitenv-"));
+    fs.mkdirSync(path.join(dir, ".vscode"), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, ".vscode", "settings.json"),
+      JSON.stringify({ "editor.fontSize": 14, "git.enabled": true }),
+      "utf8",
+    );
+
+    disableNativeGitUi(dir);
+
+    const written = JSON.parse(fs.readFileSync(path.join(dir, ".vscode", "settings.json"), "utf8"));
+    expect(written).toEqual({ "editor.fontSize": 14, "git.enabled": false });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("已是 false → 零写入（内容含其他配置原样保留，不重写）", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pylearner-gitenv-"));
+    fs.mkdirSync(path.join(dir, ".vscode"), { recursive: true });
+    const file = path.join(dir, ".vscode", "settings.json");
+    fs.writeFileSync(file, `{\n  "git.enabled": false,\n  "editor.tabSize": 2\n}\n`, "utf8");
+    const before = fs.readFileSync(file, "utf8");
+
+    disableNativeGitUi(dir);
+
+    expect(fs.readFileSync(file, "utf8")).toBe(before);   // 零写入：字节级不变
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("settings.json 含注释解析失败 → 从空重建为 git.enabled=false（不抛错）", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pylearner-gitenv-"));
+    fs.mkdirSync(path.join(dir, ".vscode"), { recursive: true });
+    fs.writeFileSync(path.join(dir, ".vscode", "settings.json"), `{ // comment\n  "git.enabled": true\n}`, "utf8");
+
+    expect(() => disableNativeGitUi(dir)).not.toThrow();
+
+    const written = JSON.parse(fs.readFileSync(path.join(dir, ".vscode", "settings.json"), "utf8"));
+    expect(written).toEqual({ "git.enabled": false });
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

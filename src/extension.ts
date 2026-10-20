@@ -52,7 +52,7 @@ import { createGitClient, type GitClient } from "./git/gitClient";
 import { submitAll } from "./git/commitOps";
 import { pullNewOnly } from "./git/pullOps";
 import { hasLocalChanges, syncToRemoteState } from "./git/syncOps";
-import { remoteWithBasic, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter } from "./git/gitEnv";
+import { remoteWithBasic, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter, disableNativeGitUi } from "./git/gitEnv";
 import { ensureStudentBranch, remoteStudentBranchExists } from "./git/branchOps";
 import { makeRunSuccessReviewer } from "./submission/reviewRequester";
 import { buildProjectSnapshot as buildProjectSnapshotImpl } from "./submission/projectSnapshot";
@@ -271,6 +271,13 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       }
     }
     const git = createGitClient(root.uri.fsPath);
+    // 隐藏原生 Git 界面（幂等补写）：新学生 bootstrap 与存量工作区统一在此覆盖，
+    // 摘掉"点几下切到他人分支全量复制"的便捷通道；失败不阻断命令流
+    try {
+      disableNativeGitUi(root.uri.fsPath);
+    } catch {
+      /* 尽力而为，settings 写入失败不影响 git 操作 */
+    }
     // origin 刷新为当前学生凭证：换机/换人后 fetch/pull 读取凭证跟随本人（push 用显式 URL，不依赖 origin）
     await updateOriginUrl(git, remote()).catch(() => {});
     // F2：committer 身份写仓库 local config，跟随当前身份（机房 git 常无全局 user.name/email，

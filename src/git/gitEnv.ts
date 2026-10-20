@@ -67,3 +67,24 @@ export async function configureCommitter(git: GitClient, studentId: string): Pro
 export async function updateOriginUrl(git: GitClient, url: string): Promise<void> {
   await git.run(["remote", "set-url", "origin", url]);
 }
+
+/**
+ * 隐藏 VS Code 原生 Git 界面：工作区 settings.json 写 git.enabled=false，关闭内置 Git 扩展
+ * （左下角分支入口/源代码管理面板/命令面板 git 命令全消失）——摘掉"点几下就能切到他人分支
+ * 全量复制代码"的便捷通道。本扩展 git 操作全部走 CLI 直调（GitClient），不受影响。
+ * 幂等：读-合并-写，保留 .vscode/settings.json 里已有的其他配置；已是 false 时零写入。
+ */
+export function disableNativeGitUi(cwd: string): void {
+  const dir = path.join(cwd, ".vscode");
+  const file = path.join(dir, "settings.json");
+  let settings: Record<string, unknown> = {};
+  try {
+    settings = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+  } catch {
+    // 文件不存在或含注释解析失败 → 从空重建（学生工作区的 settings 由扩展/VS Code 自动生成，无手工注释）
+  }
+  if (settings["git.enabled"] === false) return;
+  settings["git.enabled"] = false;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+}
