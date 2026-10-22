@@ -14,6 +14,8 @@ export function localIdErrorText(studentId: string): string | undefined {
 export interface IdentityPageDeps {
   teacherUrl: () => string;
   fetchImpl?: typeof fetch;
+  /** 可选日志（输出通道）：离线兜底时暴露真实 fetch 错误，便于诊断 */
+  log?: (message: string) => void;
   onSaved: (identity: { studentId: string; studentName: string }) => void;
   /** 一键换机（可选）：旧身份存在且学号变化时启用。
    * beforeSwitch = 确认 + 用旧身份 git 提交归档当前工作区（false = 中止，不保存新身份）；
@@ -64,8 +66,10 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
     const doFetch = deps.fetchImpl ?? fetch;
     // 先读旧身份：validate 请求携带 previousStudentId，服务端据此裁决 previousIdInRoster（spec roster §2）
     const oldId = loadStudentIdentity(context.globalState).studentId;
+    const validateUrl = `${deps.teacherUrl()}/api/identity/validate`;
+    deps.log?.(`[pylearner] identity validate → ${validateUrl}`);
     try {
-      const res = await doFetch(`${deps.teacherUrl()}/api/identity/validate`, {
+      const res = await doFetch(validateUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ studentId, studentName, ...(oldId ? { previousStudentId: oldId } : {}) }),
@@ -119,9 +123,11 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
       } else {
         currentPanel?.webview.postMessage({ type: "result", ok: false, message: identityErrorText(body.code ?? "") });
       }
-    } catch {
+    } catch (e) {
       // 离线兜底（教师端不可达）：本地保存身份，事件照常落学号目录。
       // 联网后激活时的名册复核自动自愈——不符则重新弹身份页要求修正（A25 语义仅在线时强制）。
+      const cause = (e as { cause?: { code?: string; message?: string } })?.cause;
+      deps.log?.(`[pylearner] identity validate request failed: ${e instanceof Error ? e.message : String(e)} | CAUSE: ${cause ? `${cause.code ?? ""} ${cause.message ?? ""}` : "无"}`);
       await saveStudentIdentity(context.globalState, { studentId, studentName });
       currentPanel?.webview.postMessage({
         type: "result",

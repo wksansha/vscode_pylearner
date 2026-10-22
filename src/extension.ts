@@ -354,6 +354,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       vscode.workspace
         .getConfiguration("pylearner")
         .get<string>(CONFIG_KEYS.teacherUrl, DEFAULT_TEACHER_URL),
+    log,
     onSaved: (identity: { studentId: string; studentName: string }) => {
       sessionGate?.markConfirmed();   // 保存成功 = 本人声明身份，会话内免再确认
       // 有 Git 凭证才自动拉取（离线兜底/未开通 Git 账户时跳过，避免刚提示「离线保存」又弹告警）

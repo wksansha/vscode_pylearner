@@ -38,7 +38,7 @@ export const CONFIG_KEYS = {
 // 学生机房部署前改回内网地址 http://192.168.1.100:3000 并重新打包；
 // package.json 里 pylearner.teacher.url 的 default 与此保持一致；
 // 特殊网络环境仍可用 settings.json 的 pylearner.teacher.url 覆盖。
-export const DEFAULT_TEACHER_URL = "http://10.85.54.68:3000";
+export const DEFAULT_TEACHER_URL = "http://120.48.112.26:3002";
 
 // API key lives in SecretStorage (never in settings.json — Settings Sync
 // would copy it to the user's account otherwise).

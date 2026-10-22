@@ -23,7 +23,7 @@ export function toPosix(fsPath: string, rootFsPath: string): string {
 }
 
 interface ReviewResponse {
-  review: { status: "pass" | "fail" | "unreviewed"; reason: string };
+  review: { status: "pass" | "fail" | "unreviewed"; reason: string; source?: "llm" | "mock" | "timeout" | "not_configured" };
   submissionId: string | null;
 }
 
@@ -49,9 +49,10 @@ export async function requestReview(deps: ReviewerDeps, args: { filePath: string
     if (res.status === 404) return "not-exercise";   // 服务端未命中 exercises 表 → 静默（唯一注册表在服务端）
     if (!res.ok) return "error";
     const body = (await res.json()) as ReviewResponse;
-    const { status, reason } = body.review;
+    const { status, reason, source } = body.review;
     if (status === "pass") deps.notify(`✅ 评审通过${reason ? `：${reason}` : ""}`, false);
     else if (status === "fail") deps.notify(`❌ 评审未通过：${reason}`, true);
+    else if (source === "not_configured") console.warn("[ReviewRequester] 本环境未启用 AI 评审，跳过提示");   // 未配置 LLM 的环境（如云上练习）：静默，不提示重试
     else deps.notify("⚪ 本次未能完成评审，稍后再试", false);
     return "reviewed";
   } catch {
