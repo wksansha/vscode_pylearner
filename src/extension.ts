@@ -44,6 +44,7 @@ import { ProfileRefresher } from "./commands/autoRefresh";
 import { registerMemoryGraphCommand } from "./commands/memoryGraph";
 import { createTeacherReporter } from "./teacher/reporter";
 import { createTraceArchiver } from "./archive/archiver";
+import { findLegacyDirs, migrateLegacyTrace, type LegacyMigrateFs } from "./archive/legacyMigrate";
 import { loadStudentIdentity, migrateLegacyIdentity, clearStudentIdentity } from "./identity/studentIdentity";
 import { openIdentityPage } from "./identity/identityPage";
 import { createSessionConfirmGate } from "./identity/sessionConfirm";
@@ -420,15 +421,99 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   };
   // —— L1 全量归档（spec：docs/superpowers/specs/2026-10-13-l1-trace-archive-design.md）——
   // 激活后 10s 归档一次（无定时器）；复用 teacher.url / teacher.enabled；失败静默下次激活补传
+  const traceArchiver = createTraceArchiver({
+    globalStorageUri: context.globalStorageUri,
+    teacherUrl: identityDeps.teacherUrl,
+    isEnabled: () =>
+      vscode.workspace
+        .getConfiguration("pylearner")
+        .get<boolean>(CONFIG_KEYS.teacherEnabled, true),
+    log: (msg) => outputChannel.appendLine(msg),
+  });
+  context.subscriptions.push(traceArchiver);
+
+  // —— 同步历史练习记录（命令面板低频入口，不加面板按钮）——
+  // 旧版平铺练习数据一次性归到当前学号名下，迁移后立即触发一轮上传（学生文案不出现技术术语）。
+  // 中途失败重跑可能重复追加事件行——服务端按事件 id 幂等去重，安全。
+  const migrateFs: LegacyMigrateFs = (() => {
+    const traceRoot = vscode.Uri.joinPath(context.globalStorageUri, "trace");
+    const child = (rel: string): vscode.Uri =>
+      vscode.Uri.joinPath(traceRoot, ...rel.split("/"));
+    return {
+      async listDirs(rel) {
+        try {
+          const entries = await vscode.workspace.fs.readDirectory(child(rel));
+          return entries.filter(([, t]) => t === vscode.FileType.Directory).map(([n]) => n);
+        } catch {
+          return [];
+        }
+      },
+      async listFiles(rel) {
+        try {
+          const entries = await vscode.workspace.fs.readDirectory(child(rel));
+          return entries.filter(([, t]) => t === vscode.FileType.File).map(([n]) => n);
+        } catch {
+          return [];
+        }
+      },
+      async readFileBytes(rel) {
+        try {
+          return await vscode.workspace.fs.readFile(child(rel));
+        } catch {
+          return null;
+        }
+      },
+      async writeFileBytes(rel, data) {
+        const parent = rel.split("/").slice(0, -1).join("/");
+        if (parent) {
+          try {
+            await vscode.workspace.fs.createDirectory(child(parent));
+          } catch {
+            // exists
+          }
+        }
+        await vscode.workspace.fs.writeFile(child(rel), data);
+      },
+      async renameDir(from, to) {
+        await vscode.workspace.fs.rename(child(from), child(to), { overwrite: true });
+      },
+    };
+  })();
   context.subscriptions.push(
-    createTraceArchiver({
-      globalStorageUri: context.globalStorageUri,
-      teacherUrl: identityDeps.teacherUrl,
-      isEnabled: () =>
-        vscode.workspace
-          .getConfiguration("pylearner")
-          .get<boolean>(CONFIG_KEYS.teacherEnabled, true),
-      log: (msg) => outputChannel.appendLine(msg),
+    vscode.commands.registerCommand(CMD_IDS.migrateLegacyTrace, async () => {
+      const id = loadStudentIdentity(context.globalState);
+      if (!id.studentId || !id.studentName) {
+        void vscode.window.showInformationMessage("请先在右下角设置学号后再同步");
+        return;
+      }
+      try {
+        const legacyDirs = await findLegacyDirs(migrateFs);
+        if (legacyDirs.length === 0) {
+          void vscode.window.showInformationMessage("没有需要同步的历史数据");
+          return;
+        }
+        const pick = await vscode.window.showInformationMessage(
+          `把这台电脑之前产生的练习记录归到当前学号 ${id.studentId}（${id.studentName}）名下并同步，是否继续？`,
+          { modal: true },
+          "继续同步"   // 隐式取消由 VS Code 模态框自动追加
+        );
+        if (pick !== "继续同步") return;
+        // classId 当前未在 globalState 落地（身份页不采集），取 SecretStorage 缓存，缺省 default
+        const classId = (await context.secrets.get(SECRET_KEYS.classId)) || "default";
+        const studentId = id.studentId;     // 闭包内不继承属性收窄，先捕获
+        const studentName = id.studentName;
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: "正在同步历史练习记录…" },
+          async () => {
+            await migrateLegacyTrace(migrateFs, { studentId, studentName, classId }, legacyDirs, log);
+            await traceArchiver.runOnce();
+          }
+        );
+        void vscode.window.showInformationMessage("✅ 历史记录已同步");
+      } catch (e) {
+        void vscode.window.showErrorMessage(`同步失败：${e instanceof Error ? e.message : String(e)}`);
+        log("[pylearner] legacy trace migrate failed:", e);
+      }
     })
   );
   // 身份命令（A25：InputBox 弹窗删除，统一走身份页；状态栏点击即打开该页）

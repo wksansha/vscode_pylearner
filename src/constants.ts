@@ -12,6 +12,7 @@ export const CMD_IDS = {
   pullAssignments: "pylearner.pullAssignments",
   syncAssignments: "pylearner.syncAssignments",
   openDataFolder: "pylearner.openDataFolder",
+  migrateLegacyTrace: "pylearner.migrateLegacyTrace", // 旧平铺练习记录迁移到学号布局（命令面板低频入口）
 } as const;
 
 export const VIEW_IDS = {
