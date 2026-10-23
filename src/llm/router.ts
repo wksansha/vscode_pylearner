@@ -21,6 +21,13 @@ export interface LlmBackend {
 export class LlmRouter {
   private _config?: ReturnType<typeof getConfig>["llm"];
 
+  /** 学号提供者：teacher 分支透传给 TeacherBackend（服务端 LLM 代理名册校验依赖此头） */
+  private readonly getStudentId?: () => string | undefined;
+
+  constructor(deps: { getStudentId?: () => string | undefined } = {}) {
+    this.getStudentId = deps.getStudentId;
+  }
+
   private get config() {
     if (!this._config) {
       this._config = getConfig().llm;
@@ -42,6 +49,7 @@ export class LlmRouter {
         // 走课堂服务器代理：无需 apiKey/model，model 由服务器统一管理
         return new TeacherBackend({
           teacherUrl: this.config.teacherUrl,
+          getStudentId: this.getStudentId,   // 服务端按名册校验 + 限流依赖 X-Student-Id
         });
       case "vscode-lm":
       default:

@@ -635,7 +635,8 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   // 侧边栏不再保留 tree 视图，Chat 独占整个 Python Learner 面板
 
   // Factory function - creates a fresh router with current config on demand
-  const routerFactory = () => new LlmRouter();
+  // teacher provider 携带学号头：服务端 LLM 代理按名册校验 + 限流依赖 X-Student-Id
+  const routerFactory = () => new LlmRouter({ getStudentId: () => getIdentity().studentId || undefined });
   const refresher = new ProfileRefresher(
     context.globalStorageUri,
     context.secrets,
