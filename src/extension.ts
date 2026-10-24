@@ -937,8 +937,11 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
             openIdentityPage(identityDeps, context);
           } else {
             // 静默补领 gitSecret：学生换机/重建秘钥环后免手动重存身份
-            const body = await res.json().catch(() => ({})) as { gitSecret?: string | null };
+            // 同步刷新服务端下发的仓库地址：换服务器/换 IP 后学生重启 VS Code 即自动迁移
+            //（否则 globalState 旧地址滞留——身份已存就不再弹身份页，缓存永远不更新）
+            const body = await res.json().catch(() => ({})) as { gitSecret?: string | null; gitRepoUrl?: string };
             if (body.gitSecret) await context.secrets.store(SECRET_KEYS.gitSecret, body.gitSecret);
+            if (body.gitRepoUrl) await context.globalState.update(STATE_KEYS.gitRepoUrl, body.gitRepoUrl);
           }
         } catch {
           /* 服务器不可达：静默，下次再复核 */
