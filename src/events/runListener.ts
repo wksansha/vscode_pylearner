@@ -67,7 +67,14 @@ function parsePythonError(output: string): PythonErrorInfo {
 
 // ── Listener ──────────────────────────────────────────────────────────
 
-export function createRunListener(writer: L1Writer): vscode.Disposable {
+export interface RunListenerDeps {
+  /** F5 纳入身份确认门禁（登录态在线模型）：捕获到 run 事件时触发确认弹窗
+   * （每窗口仅一次；已确认时为 no-op）。运行本身由 VS Code/Python 扩展发起，无法事前拦截，
+   * 采用事件后确认——在线点亮效果不受影响 */
+  confirmIdentity?: () => void;
+}
+
+export function createRunListener(writer: L1Writer, deps?: RunListenerDeps): vscode.Disposable {
   const disposables: vscode.Disposable[] = [];
 
   // Dedupe state: one ▶ run fires BOTH a task event and a terminal shell
@@ -166,6 +173,7 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
         exit_code: e.exitCode,
         error_message: errorMessage?.slice(0, 2000),
       });
+      deps?.confirmIdentity?.();
     })
   );
 
@@ -241,6 +249,7 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
             error_message:
               "exit code unavailable (shell integration disabled)",
           });
+          deps?.confirmIdentity?.();
         } else {
           console.warn(
             "Python Learner: terminal shell execution without exit code (shell integration off?)"
@@ -299,6 +308,7 @@ export function createRunListener(writer: L1Writer): vscode.Disposable {
             ...errorFields,
           }
         );
+        deps?.confirmIdentity?.();
       })();
     })
   );

@@ -20,6 +20,7 @@ vi.mock("vscode", () => {
     get lastPanel() { return state.lastPanel; },
   };
   return {
+    env: { machineId: "test-machine-001", sessionId: "test-session-1" },
     window: {
       createWebviewPanel: vi.fn(() => {
         let onDispose: (() => void) | undefined;
@@ -369,5 +370,56 @@ describe("三分叉切换（spec roster §3：名册感知）", () => {
     };
     await submit(deps, store, "2025002", "李四");
     expect(order).toEqual(["beforeSwitch", "afterSwitch"]);
+  });
+});
+
+describe("切换登出信号（登录态在线模型：reportSessionEnd）", () => {
+  const makeSwitchDeps = (fetchBody: Record<string, unknown>, order: string[], beforeSwitchOk = true) => {
+    const store = makeStore();
+    store.data.set("pylearner.identity.studentId", "2025001");   // 旧身份存在
+    const reportSessionEnd = vi.fn(async (mid: string) => { order.push("sessionEnd"); });
+    const deps: IdentityPageDeps = {
+      ...makeDeps(vi.fn().mockResolvedValue(new Response(JSON.stringify(fetchBody), { status: 200 }))),
+      reportSessionEnd,
+      switchFlow: {
+        beforeSwitch: async () => { order.push("beforeSwitch"); return beforeSwitchOk; },
+        afterSwitch: async () => { order.push("afterSwitch"); },
+        semesterReset: async () => { order.push("semesterReset"); return true; },
+      },
+    };
+    return { deps, store, reportSessionEnd };
+  };
+
+  it("一键换机成功 → session_end 携带 machineId，发生在保存新身份之前", async () => {
+    const order: string[] = [];
+    const { deps, store, reportSessionEnd } = makeSwitchDeps({ ok: true, gitSecret: "tok-B", previousIdInRoster: true }, order);
+    await submit(deps, store, "2025002", "李四");
+    expect(order).toEqual(["beforeSwitch", "sessionEnd", "afterSwitch"]);
+    expect(reportSessionEnd).toHaveBeenCalledWith("test-machine-001");
+    expect(store.data.get("pylearner.identity.studentId")).toBe("2025002");
+  });
+
+  it("学期更替清空成功 → 同样发送 session_end", async () => {
+    const order: string[] = [];
+    const { deps, store, reportSessionEnd } = makeSwitchDeps({ ok: true, gitSecret: "tok-B", previousIdInRoster: false }, order);
+    await submit(deps, store, "2026001", "李四");
+    expect(order).toEqual(["semesterReset", "sessionEnd", "afterSwitch"]);
+    expect(reportSessionEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("归档失败中止切换 → 不发送 session_end", async () => {
+    const order: string[] = [];
+    const { deps, store, reportSessionEnd } = makeSwitchDeps({ ok: true, gitSecret: "tok-B", previousIdInRoster: true }, order, false);
+    await submit(deps, store, "2025002", "李四");
+    expect(order).toEqual(["beforeSwitch"]);   // 中止：不保存、不登出
+    expect(reportSessionEnd).not.toHaveBeenCalled();
+    expect(store.data.get("pylearner.identity.studentId")).toBe("2025001");
+  });
+
+  it("同学号重存（补领凭证）→ 不发送 session_end", async () => {
+    const order: string[] = [];
+    const { deps, store, reportSessionEnd } = makeSwitchDeps({ ok: true, gitSecret: "tok-B" }, order);
+    await submit(deps, store, "2025001", "张三");   // 同学号 = 非切换
+    expect(reportSessionEnd).not.toHaveBeenCalled();
   });
 });

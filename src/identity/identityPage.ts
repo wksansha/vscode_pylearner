@@ -27,6 +27,9 @@ export interface IdentityPageDeps {
      * true=已清空可继续；false=中止。未接线时该分叉安全降级为中止（不误入归档死锁）。 */
     semesterReset?: (oldId: string, newId: string) => Promise<boolean>;
   };
+  /** 切换学号登出信号（登录态在线模型）：归档/清空成功后、保存新身份前调用（此时 globalState
+   * 仍是旧身份 → L1 落旧学号目录、reporter 用旧 student_id 上报）。fire-and-forget，失败仅日志 */
+  reportSessionEnd?: (machineId: string) => Promise<void>;
 }
 
 /** A25 错误码→文案（与 server validateIdentity 的 message 逐字一致） */
@@ -97,6 +100,14 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
                 return;
               }
             }
+          }
+          // 归档/清空成功后：登出旧身份（登录态在线模型，大屏旧学号立即下线）；
+          // 此时尚未保存新身份，globalState/reporter 仍为旧身份。fire-and-forget 不阻塞切换
+          const mid = vscode.env?.machineId ?? "";
+          if (mid) {
+            deps.reportSessionEnd?.(mid).catch((e) =>
+              deps.log?.(`[pylearner] session_end report failed: ${e instanceof Error ? e.message : String(e)}`)
+            );
           }
           // 归档/清空成功后才存新 gitSecret（beforeSwitch 推旧分支必须用旧凭证）
           await storeGitSecret(context, body.gitSecret);

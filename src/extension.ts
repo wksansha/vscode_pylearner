@@ -57,6 +57,7 @@ import { remoteWithBasic, probeGit, isGitWorkTree, bootstrapClone, updateOriginU
 import { ensureStudentBranch, remoteStudentBranchExists } from "./git/branchOps";
 import { makeRunSuccessReviewer } from "./submission/reviewRequester";
 import { buildProjectSnapshot as buildProjectSnapshotImpl } from "./submission/projectSnapshot";
+import { ulid } from "ulidx";
 
 // Global error handlers to prevent uncaught exceptions from crashing the extension host
 process.on("uncaughtException", (err) => {
@@ -147,6 +148,21 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   // 归档与分析共用同一身份源（spec §4.1）
   l1Writer.setIdentityProvider(getIdentity);
 
+  // 机器标识（登录态在线模型）：vscode.env.machineId 每台电脑稳定唯一、跨窗口跨重启不变；
+  // 异常环境为空时降级 ulid（退化成窗口级，仅影响多机计数不影响可用性）
+  const machineId = vscode.env.machineId || ulid();
+
+  // 登录信号（identity_confirmed）：大屏在线 = 右下角确认状态的镜像。
+  // onConfirmed 是所有确认路径的统一出口（弹窗「是我本人」/ 身份页保存成功）
+  const reportIdentityConfirmed = () => {
+    l1Writer
+      .append("behavior", "identity_confirmed", {
+        machine_id: machineId,
+        session_id: vscode.env.sessionId,
+      })
+      .catch((err) => log("[pylearner] identity_confirmed report failed:", err));
+  };
+
   // 初始化教师端上报器（如果启用）
   let currentReporter: ReturnType<typeof createTeacherReporter> | undefined;
   async function applyTeacherReporter() {
@@ -206,9 +222,46 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     vscode,
     getIdentity,
     onSwitchIdentity: () => openIdentityPage(identityDeps, context),
-    onConfirmed: () => updateStatusBar(),
+    onConfirmed: () => {
+      updateStatusBar();
+      reportIdentityConfirmed();   // 登录信号：确认即在线（大屏零延迟点亮）
+    },
   });
   updateStatusBar();
+
+  // 心跳（登录态在线模型）：已确认窗口每 60s 报平安；未确认不发。
+  // 专用 /api/heartbeat 通道，不进 L1/trace_events（避免污染画像数据源）。
+  // 关机/闪退无信号 → 服务端 3 分钟超时判下线；服务端重启 → 第一拍心跳自愈。
+  const teacherUrl = () =>
+    vscode.workspace
+      .getConfiguration("pylearner")
+      .get<string>(CONFIG_KEYS.teacherUrl, DEFAULT_TEACHER_URL);
+  const HEARTBEAT_INTERVAL_MS = 60_000;
+  const heartbeatTimer = setInterval(() => {
+    if (!currentReporter) return;   // teacher.enabled=false 时与上报器同开关
+    if (!sessionGate?.isConfirmed()) return;
+    const id = loadStudentIdentity(context.globalState);
+    if (!id.studentId) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    fetch(teacherUrl() + "/api/heartbeat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        student_id: id.studentId,
+        student_name: id.studentName ?? id.studentId,
+        machine_id: machineId,
+      }),
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) log(`[pylearner] heartbeat failed (${res.status})`);
+      })
+      .catch((err) => log("[pylearner] heartbeat unreachable:", err instanceof Error ? err.message : String(err)))
+      .finally(() => clearTimeout(timer));
+  }, HEARTBEAT_INTERVAL_MS);
+  (heartbeatTimer as unknown as { unref?: () => void }).unref?.();
+  context.subscriptions.push({ dispose: () => clearInterval(heartbeatTimer) });
 
   // —— 学生分支直连模型（spec 2026-10-15 §4）：git 运行环境解析 ——
   // 工作区 + 身份 + token + 仓库就绪缺一不可；任一缺失提示后返回 null，命令静默中止
@@ -351,11 +404,12 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
 
   // —— 作业系统装配（A25：身份页 + 一键换机）——
   const identityDeps = {
-    teacherUrl: () =>
-      vscode.workspace
-        .getConfiguration("pylearner")
-        .get<string>(CONFIG_KEYS.teacherUrl, DEFAULT_TEACHER_URL),
+    teacherUrl,
     log,
+    // 切换学号登出信号（登录态在线模型）：归档/清空成功后、保存新身份前发送（旧身份仍在本机 globalState，
+    // L1 落旧学号目录、reporter 用旧 student_id 上报）。fire-and-forget，失败不阻塞切换
+    reportSessionEnd: (mid: string) =>
+      l1Writer.append("behavior", "session_end", { machine_id: mid, reason: "identity_switch" }),
     onSaved: (identity: { studentId: string; studentName: string }) => {
       sessionGate?.markConfirmed();   // 保存成功 = 本人声明身份，会话内免再确认
       // 有 Git 凭证才自动拉取（离线兜底/未开通 Git 账户时跳过，避免刚提示「离线保存」又弹告警）
@@ -740,7 +794,13 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   }
 
   try {
-    context.subscriptions.push(createRunListener(l1Writer));
+    context.subscriptions.push(
+      createRunListener(l1Writer, {
+        // F5 纳入身份确认门禁（登录态在线模型）：run 由 VS Code/Python 扩展发起无法事前拦截，
+        // 捕获到 run 事件后触发确认（每窗口仅一次，已确认时 no-op）
+        confirmIdentity: () => void sessionGate?.ensureConfirmed(),
+      })
+    );
     log("[pylearner] run listener registered");
   } catch (err) {
     log("[pylearner] failed to register run listener:", err);
