@@ -34,12 +34,11 @@ export const CONFIG_KEYS = {
   gitRepoUrl: "pylearner.gitRepoUrl",
 } as const;
 
-// 课堂服务器地址（⚠️ 临时测试值：2026-10-19 手机热点联调，指向本机热点 IP）。
-// ⚠️ 测试结束必须改回 http://localhost:3000（开发期本机调试）；
-// 学生机房部署前改回内网地址 http://192.168.1.100:3000 并重新打包；
+// 课堂服务器地址（3.x 本地测试版：localhost 自动适配本机，无需关心热点/网卡实际 IP）。
+// ⚠️ 学生机房/外网部署前改回实际服务端地址并重新打包（外网部署版 1.0.2 为 http://120.48.112.26:3002）；
 // package.json 里 pylearner.teacher.url 的 default 与此保持一致；
 // 特殊网络环境仍可用 settings.json 的 pylearner.teacher.url 覆盖。
-export const DEFAULT_TEACHER_URL = "http://120.48.112.26:3002";
+export const DEFAULT_TEACHER_URL = "http://localhost:3000";
 
 // API key lives in SecretStorage (never in settings.json — Settings Sync
 // would copy it to the user's account otherwise).

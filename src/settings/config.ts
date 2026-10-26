@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { CONFIG_KEYS } from "../constants";
+import { CONFIG_KEYS, DEFAULT_TEACHER_URL } from "../constants";
 
 export interface LlmConfig {
   provider: string;
@@ -29,7 +29,7 @@ function readLlmConfig(): LlmConfig {
     provider: cfg.get<string>(CONFIG_KEYS.llmProvider, "teacher"),
     model: cfg.get<string>(CONFIG_KEYS.llmModel, ""),
     baseUrl: cfg.get<string>(CONFIG_KEYS.llmBaseUrl, "http://localhost:11434"),
-    teacherUrl: cfg.get<string>(CONFIG_KEYS.teacherUrl, "http://127.0.0.1:3000"),
+    teacherUrl: cfg.get<string>(CONFIG_KEYS.teacherUrl, DEFAULT_TEACHER_URL),
     teacherEnabled: cfg.get<boolean>(CONFIG_KEYS.teacherEnabled, true),
   };
 }
