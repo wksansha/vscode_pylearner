@@ -3,6 +3,7 @@ import { useChat } from "./hooks/useChat";
 import { ChatMessages } from "./components/ChatMessages";
 import { ChatInput } from "./components/ChatInput";
 import { SessionList } from "./components/SessionList";
+import { BrandIcon } from "./components/BrandIcon";
 
 const App: React.FC = () => {
   const {
@@ -27,7 +28,9 @@ const App: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-600">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold">🐍 Python Learner</span>
+          <span className="text-sm font-semibold flex items-center gap-1.5">
+            <BrandIcon size={16} /> Python Learner
+          </span>
         </div>
         <div className="flex items-center gap-1">
           <button

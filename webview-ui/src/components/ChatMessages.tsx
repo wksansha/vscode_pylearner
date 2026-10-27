@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from "react";
 import type { ChatMessage } from "../types/messages";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { BrandIcon } from "./BrandIcon";
 
 interface Props {
   messages: ChatMessage[];
@@ -55,7 +56,9 @@ export const ChatMessages: React.FC<Props> = ({
       ))}
       {messages.length === 0 && !isStreaming && (
         <div className="text-center text-gray-400 mt-8">
-          <p className="text-lg">🐍 Python Learner</p>
+          <p className="text-lg flex items-center justify-center gap-2">
+            <BrandIcon size={22} /> Python Learner
+          </p>
           <p className="text-sm mt-2">
             Ask me anything about Python — I learn from how you code.
           </p>
