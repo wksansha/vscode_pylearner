@@ -16,7 +16,8 @@ export interface IdentityPageDeps {
   fetchImpl?: typeof fetch;
   /** 可选日志（输出通道）：离线兜底时暴露真实 fetch 错误，便于诊断 */
   log?: (message: string) => void;
-  onSaved: (identity: { studentId: string; studentName: string }) => void;
+  /** 保存成功回调：opts.switched = 走了一键换机/学期更替（afterSwitch 已同步本人分支，宿主据此跳过拉取引导） */
+  onSaved: (identity: { studentId: string; studentName: string }, opts?: { switched?: boolean }) => void;
   /** 一键换机（可选）：旧身份存在且学号变化时启用。
    * beforeSwitch = 确认 + 用旧身份 git 提交归档当前工作区（false = 中止，不保存新身份）；
    * afterSwitch = 保存新身份后 checkout 新分支并同步作业（见 switchFlow.ts，按新学号执行）。 */
@@ -113,9 +114,11 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
           await storeGitSecret(context, body.gitSecret);
           await saveStudentIdentity(context.globalState, identity);
           await flow.afterSwitch(identity.studentId);
+          deps.onSaved(identity, { switched: true });   // 换机完成：afterSwitch 已同步，宿主不再引导拉取
         } else {
           await storeGitSecret(context, body.gitSecret);   // 同学号重存 = 补领/刷新凭证
           await saveStudentIdentity(context.globalState, identity);   // A25：校验通过才保存（名册规范姓名）
+          deps.onSaved(identity);
         }
         // 服务端下发的课堂仓库地址缓存 globalState（学生机零配置；教师本机调试可用 settings pylearner.gitRepoUrl 覆盖）
         if (body.gitRepoUrl) await context.globalState.update(STATE_KEYS.gitRepoUrl, body.gitRepoUrl);
@@ -130,7 +133,6 @@ export function openIdentityPage(deps: IdentityPageDeps, context: IdentityContex
         } else {
           setTimeout(() => currentPanel?.dispose(), 1_200);
         }
-        deps.onSaved(identity);
       } else {
         currentPanel?.webview.postMessage({ type: "result", ok: false, message: identityErrorText(body.code ?? "") });
       }

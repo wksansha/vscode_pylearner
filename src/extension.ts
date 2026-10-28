@@ -386,11 +386,25 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     }
   };
 
-  // 身份保存后的引导（2026-10-28 调整：拉取作业不再自动触发，学生需要时手动点按钮）：
-  // 仅在无工作区时引导选作业目录。平台行为：空窗口加入首个工作区文件夹会重启扩展宿主（updateWorkspaceFolders 也不例外），
+  // 问句引导（2026-10-28）：工作区就绪后询问是否立即拉取——学生点「立即拉取」才执行；
+  // 同意拉取即同意初始化（pendingInitAutoConfirm 一次性跳过「立即初始化」重复确认）
+  const offerFirstPull = async (name: string): Promise<void> => {
+    const pick = await vscode.window.showInformationMessage(
+      `欢迎 ${name}！作业目录已就绪，是否立即拉取作业？`,
+      "立即拉取"
+    );
+    if (pick === "立即拉取") {
+      pendingInitAutoConfirm = true;
+      void vscode.commands.executeCommand(CMD_IDS.pullAssignments);
+    }
+  };
+
+  // 身份保存后的引导（2026-10-28 调整：拉取作业不再自动触发）：
+  // 无工作区 → 引导选作业目录（选完整窗重载，激活流程续跑再问询）；已有工作区（空文件夹）→ 直接问是否立即拉取。
+  // 平台行为：空窗口加入首个工作区文件夹会重启扩展宿主（updateWorkspaceFolders 也不例外），
   // 内存中的会话确认态与进行中的操作全部丢失——因此选完目录用 openFolder 整窗重载（确定性路径），
-  // 先落 onboardingPending 标记，重载后由激活流程续跑（补会话确认 + 指路提示），见下方首启检查。
-  const guideFolderAfterSave = async (): Promise<void> => {
+  // 先落 onboardingPending 标记，重载后由激活流程续跑（补会话确认 + 问句引导），见下方首启检查。
+  const guideFolderAfterSave = async (name: string): Promise<void> => {
     if (!vscode.workspace.workspaceFolders?.length) {
       const pick = await vscode.window.showInformationMessage(
         "身份设置成功！最后一步：选择一个空文件夹作为你的作业目录，作业代码将存放在这里",
@@ -402,7 +416,9 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       if (!folder) return;
       await context.globalState.update(STATE_KEYS.onboardingPending, true);
       await vscode.commands.executeCommand("vscode.openFolder", folder, { forceNewWindow: false });
+      return;
     }
+    await offerFirstPull(name);
   };
 
   // —— 作业系统装配（A25：身份页 + 一键换机）——
@@ -413,9 +429,10 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     // L1 落旧学号目录、reporter 用旧 student_id 上报）。fire-and-forget，失败不阻塞切换
     reportSessionEnd: (mid: string) =>
       l1Writer.append("behavior", "session_end", { machine_id: mid, reason: "identity_switch" }),
-    onSaved: () => {
+    onSaved: (identity: { studentId: string; studentName: string }, opts?: { switched?: boolean }) => {
       sessionGate?.markConfirmed();   // 保存成功 = 本人声明身份，会话内免再确认
-      void guideFolderAfterSave();   // 无工作区时引导选作业目录；拉取作业不再自动触发（2026-10-28），学生需要时手动点按钮
+      if (opts?.switched) return;   // 换机已由 refillAfterSwitch 同步本人分支，不再引导拉取
+      void guideFolderAfterSave(identity.studentName || identity.studentId);   // 无工作区引导选目录 / 已开工作区问句引导拉取
     },
     // 一键换机（spec §4.6）：身份页校验通过且学号变化时触发，四段编排见 switchFlow.ts（全 git 原语）
     switchFlow: {
@@ -972,17 +989,9 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         if (pendingId.studentId) {
           sessionGate?.markConfirmed();
           if (vscode.workspace.workspaceFolders?.length) {
-            void vscode.window.showInformationMessage(
-              `欢迎 ${pendingId.studentName || pendingId.studentId}！作业目录已就绪，是否立即拉取作业？`,
-              "立即拉取"
-            ).then((pick) => {
-              if (pick === "立即拉取") {
-                pendingInitAutoConfirm = true;   // 引导路径：同意拉取即同意初始化，跳过「立即初始化」重复确认
-                void vscode.commands.executeCommand(CMD_IDS.pullAssignments);
-              }
-            });
+            void offerFirstPull(pendingId.studentName || pendingId.studentId);
           } else {
-            void guideFolderAfterSave();   // 极少数：文件夹未随重载持久化，重新引导选择
+            void guideFolderAfterSave(pendingId.studentName || pendingId.studentId);   // 极少数：文件夹未随重载持久化，重新引导选择
           }
           return;
         }
