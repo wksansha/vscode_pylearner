@@ -53,7 +53,7 @@ import { submitAll } from "./git/commitOps";
 import { pullNewOnly } from "./git/pullOps";
 import { hasLocalChanges, syncToRemoteState } from "./git/syncOps";
 import { remoteWithBasic, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter, disableNativeGitUi } from "./git/gitEnv";
-import { ensureStudentBranch, remoteStudentBranchExists } from "./git/branchOps";
+import { ensureStudentBranch } from "./git/branchOps";
 import { makeRunSuccessReviewer } from "./submission/reviewRequester";
 import { buildProjectSnapshot as buildProjectSnapshotImpl } from "./submission/projectSnapshot";
 import { ulid } from "ulidx";
@@ -268,7 +268,10 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   const gitRepoUrl = () =>
     vscode.workspace.getConfiguration("pylearner").get<string>(CONFIG_KEYS.gitRepoUrl, "") ||
     (context.globalState.get<string>(STATE_KEYS.gitRepoUrl) ?? "");
-  async function resolveGitEnv(): Promise<{ git: GitClient; remote: () => string; bootstrapped: boolean; freshBootstrap: boolean } | null> {
+  // 首次引导一次性标记：学生已在通知里点「立即拉取」表达同意，本次 bootstrap 跳过「立即初始化」重复确认；
+  // 消费即失效，手动路径（自己点按钮）模态照旧
+  let pendingInitAutoConfirm = false;
+  async function resolveGitEnv(): Promise<{ git: GitClient; remote: () => string; bootstrapped: boolean } | null> {
     // 等激活时的静默复核把 gitRepoUrl 刷完（最多 3s，通常 <200ms；超时放行，网络断了后面 git 命令会报明确错）
     await Promise.race([gitRepoUrlReady, new Promise<void>(r => setTimeout(r, 3000))]);
     const root = vscode.workspace.workspaceFolders?.[0];
@@ -306,12 +309,16 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         );
         return null;
       }
-      const pick = await vscode.window.showInformationMessage(
-        "工作区尚未初始化课堂仓库，立即初始化（下载教师作业与你的分支）？",
-        { modal: true },
-        "立即初始化"
-      );
-      if (pick !== "立即初始化") return null;
+      const skipInitConfirm = pendingInitAutoConfirm;
+      pendingInitAutoConfirm = false;
+      if (!skipInitConfirm) {
+        const pick = await vscode.window.showInformationMessage(
+          "工作区尚未初始化课堂仓库，立即初始化（下载教师作业与你的分支）？",
+          { modal: true },
+          "立即初始化"
+        );
+        if (pick !== "立即初始化") return null;
+      }
       try {
         await vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title: "正在初始化课堂仓库…" },
@@ -340,10 +347,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     await configureCommitter(git, id.studentId).catch(() => {});
     // F1：bootstrap 落点已按分支存在性分流（新学生停 main / 换机学生直落自己分支），此处幂等保障兜底（失败静默，命令体内的 ensure 再兜底）
     if (bootstrapped) await ensureStudentBranch(git, id.studentId).catch(() => {});
-    // 新学生首用（刚 bootstrap 且远端学生分支不存在）：工作区已停在 origin/main 基线，
-    // 后续增量拉取必为空转，调用方可据此跳过（老学生换机时远端分支存在，不置 true，增量拉取照常）
-    const freshBootstrap = bootstrapped && !(await remoteStudentBranchExists(git, id.studentId).catch(() => false));
-    return { git, remote, bootstrapped, freshBootstrap };
+    return { git, remote, bootstrapped };
   }
   // 提交删除确认（spec 4.4 第 2 步）：提交按钮与一键换机归档共用
   const confirmDeleteModal = async (n: number): Promise<boolean> => {
@@ -382,11 +386,11 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     }
   };
 
-  // 新手引导（spec §6）：身份保存成功后自动拉取一次作业；无工作区时先引导选作业目录。
-  // 平台行为：空窗口加入首个工作区文件夹会重启扩展宿主（updateWorkspaceFolders 也不例外），
-  // 内存中的会话确认态与进行中的拉取全部丢失——因此选完目录用 openFolder 整窗重载（确定性路径），
-  // 先落 onboardingPending 标记，重载后由激活流程续跑（补会话确认 + 自动拉取），见下方首启检查。
-  const autoPullAfterSave = async (): Promise<void> => {
+  // 身份保存后的引导（2026-10-28 调整：拉取作业不再自动触发，学生需要时手动点按钮）：
+  // 仅在无工作区时引导选作业目录。平台行为：空窗口加入首个工作区文件夹会重启扩展宿主（updateWorkspaceFolders 也不例外），
+  // 内存中的会话确认态与进行中的操作全部丢失——因此选完目录用 openFolder 整窗重载（确定性路径），
+  // 先落 onboardingPending 标记，重载后由激活流程续跑（补会话确认 + 指路提示），见下方首启检查。
+  const guideFolderAfterSave = async (): Promise<void> => {
     if (!vscode.workspace.workspaceFolders?.length) {
       const pick = await vscode.window.showInformationMessage(
         "身份设置成功！最后一步：选择一个空文件夹作为你的作业目录，作业代码将存放在这里",
@@ -398,9 +402,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       if (!folder) return;
       await context.globalState.update(STATE_KEYS.onboardingPending, true);
       await vscode.commands.executeCommand("vscode.openFolder", folder, { forceNewWindow: false });
-      return;   // 整窗重载后从激活流程续跑，本实例后续代码不再执行
     }
-    void vscode.commands.executeCommand(CMD_IDS.pullAssignments);
   };
 
   // —— 作业系统装配（A25：身份页 + 一键换机）——
@@ -411,12 +413,9 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     // L1 落旧学号目录、reporter 用旧 student_id 上报）。fire-and-forget，失败不阻塞切换
     reportSessionEnd: (mid: string) =>
       l1Writer.append("behavior", "session_end", { machine_id: mid, reason: "identity_switch" }),
-    onSaved: (identity: { studentId: string; studentName: string }) => {
+    onSaved: () => {
       sessionGate?.markConfirmed();   // 保存成功 = 本人声明身份，会话内免再确认
-      // 有 Git 凭证才自动拉取（离线兜底/未开通 Git 账户时跳过，避免刚提示「离线保存」又弹告警）
-      void context.secrets.get(SECRET_KEYS.gitSecret).then((secret) => {
-        if (secret) void autoPullAfterSave();
-      });
+      void guideFolderAfterSave();   // 无工作区时引导选作业目录；拉取作业不再自动触发（2026-10-28），学生需要时手动点按钮
     },
     // 一键换机（spec §4.6）：身份页校验通过且学号变化时触发，四段编排见 switchFlow.ts（全 git 原语）
     switchFlow: {
@@ -707,17 +706,11 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       if (!env) return;
       const id = loadStudentIdentity(context.globalState);
       if (!id.studentId) return;
-      // 初始化刚完成（2026-10-28 体验优化）：到此为止，不自动接增量拉取——
-      // 换机学生（远程分支已存在）bootstrap 已直落同步，紧接的增量拉取纯属重复 fetch；新学生问一句要不要拉
+      // 初始化刚完成（2026-10-28 体验优化）：作业已随 bootstrap 就位（新学生落 main 基线 / 老学生直落自己分支），
+      // 到此为止不自动接增量拉取——学生要新题再点一次「拉取作业」
       if (env.bootstrapped) {
-        if (env.freshBootstrap) {
-          const pick = await vscode.window.showInformationMessage("仓库已初始化完成，是否拉取作业？", "拉取作业");
-          if (pick !== "拉取作业") return;
-          // 选「拉取作业」→ 落到下方正常增量拉取（基线已含当前作业，结果多为"暂无新作业"）
-        } else {
-          void vscode.window.showInformationMessage(`课堂仓库已初始化，作业分支已同步（student-${id.studentId}）`);
-          return;
-        }
+        void vscode.window.showInformationMessage(`仓库已初始化完成，作业已就绪（student-${id.studentId}）`);
+        return;
       }
       // 脏工作区守卫：rebase 前置条件是工作区干净，未提交的已跟踪修改会让拉取被 git 直接拒绝。
       // 只算已跟踪修改（?? 开头的未跟踪新文件不阻塞 rebase，不误伤题库 main 无 .gitignore 时引导写入的新文件）
@@ -971,16 +964,25 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         studentName: SECRET_KEYS.studentName,
       });
       // 新手引导续跑：身份保存后选作业目录触发整窗重载，重启后在此恢复——
-      // 补会话确认（消除问号）+ 自动拉取。标记一次性消费，正常重启不带此标记，不影响共享电脑防误用确认。
+      // 补会话确认 + 一次性引导提问（学生点「立即拉取」才执行，不点无任何动作）。
+      // 标记一次性消费，正常重启不带此标记，不影响共享电脑防误用确认。
       if (context.globalState.get(STATE_KEYS.onboardingPending) === true) {
         await context.globalState.update(STATE_KEYS.onboardingPending, undefined);
         const pendingId = loadStudentIdentity(context.globalState);
         if (pendingId.studentId) {
           sessionGate?.markConfirmed();
           if (vscode.workspace.workspaceFolders?.length) {
-            void vscode.commands.executeCommand(CMD_IDS.pullAssignments);
+            void vscode.window.showInformationMessage(
+              `欢迎 ${pendingId.studentName || pendingId.studentId}！作业目录已就绪，是否立即拉取作业？`,
+              "立即拉取"
+            ).then((pick) => {
+              if (pick === "立即拉取") {
+                pendingInitAutoConfirm = true;   // 引导路径：同意拉取即同意初始化，跳过「立即初始化」重复确认
+                void vscode.commands.executeCommand(CMD_IDS.pullAssignments);
+              }
+            });
           } else {
-            void autoPullAfterSave();   // 极少数：文件夹未随重载持久化，重新引导选择
+            void guideFolderAfterSave();   // 极少数：文件夹未随重载持久化，重新引导选择
           }
           return;
         }

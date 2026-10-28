@@ -6,7 +6,7 @@
  * 四段全部映射为 git 原语（git 命令组装只在 src/git/ 内，学生零 Git 认知）：
  *
  *   beforeSwitch(旧身份) = submitAll（add -A + commit + push；非 ok/nothing → 中止切换）
- *   afterSwitch(新身份)  = ensureStudentBranch → clean -fdX → pull 远端学生分支（不存在则忽略）→ pullNewOnly
+ *   afterSwitch(新身份)  = ensureStudentBranch → clean -fdX → pull 远端学生分支（不存在则忽略）
  *
  * 时序约束：
  * - 归档必须发生在保存新身份之前（submitAll 按 oldId 断言并推送 student-<oldId> 分支）
@@ -16,7 +16,7 @@
 import type { GitClient } from "../git/gitClient";
 import { submitAll, countLocalChanges, type SubmitResult } from "../git/commitOps";
 import { ensureStudentBranch, cleanIgnored, remoteStudentBranchExists, resetToMainBaseline } from "../git/branchOps";
-import { pullNewOnly, pullStudentBranch } from "../git/pullOps";
+import { pullStudentBranch } from "../git/pullOps";
 
 export type NotifyFn = (msg: string, warn: boolean) => void;
 
@@ -74,7 +74,8 @@ export interface AfterSwitchDeps {
   notify: NotifyFn;
 }
 
-/** 阶段二（保存新身份后调用）：checkout 新分支 → clean 清缓存 → 同步远端提交 → 同步 main 新增作业 → 汇总通知 */
+/** 阶段二（保存新身份后调用）：checkout 新分支 → clean 清缓存 → 同步远端本人分支 → 通知。
+ * 2026-10-28 调整：不再自动拉取教师 main 新作业——学生需要时手动点「拉取作业」，换机只同步本人分支。 */
 export async function refillAfterSwitch(deps: AfterSwitchDeps): Promise<void> {
   const { git, newStudentId } = deps;
   const branch = `student-${newStudentId}`;
@@ -98,13 +99,8 @@ export async function refillAfterSwitch(deps: AfterSwitchDeps): Promise<void> {
       return;
     }
   }
-  let added = 0;
-  try {
-    added = (await pullNewOnly(git, newStudentId)).pulled.length;
-  } catch (e) {
-    deps.notify(`同步新增作业失败：${errMsg(e)}，可执行「拉取作业」重试`, true);
-  }
-  deps.notify(`已切换到 ${newStudentId} 的作业目录${added > 0 ? `：拉取新作业 ${added} 个文件` : "（暂无新作业）"}`, false);
+  // 2026-10-28：不自动拉取教师 main 新作业（学生需要时手动点「拉取作业」），换机只同步本人分支
+  deps.notify(`已切换到 ${newStudentId} 的作业目录`, false);
 }
 
 export interface SemesterResetDeps {

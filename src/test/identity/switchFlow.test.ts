@@ -64,7 +64,7 @@ function archiveRoutes(opts?: { branch?: string; status?: string; nothingToCommi
 }
 
 /** 新学生 2025002 分支重建与同步所需路由 */
-function refillRoutes(opts?: { branchMissing?: boolean; pullFail?: boolean; newFiles?: string; newOnlyFail?: boolean }) {
+function refillRoutes(opts?: { branchMissing?: boolean; pullFail?: boolean }) {
   return [
     { match: cmd("config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main") },   // ensureStudentBranch 开头幂等刷 refspec
     { match: cmd("config --add remote.origin.fetch +refs/heads/student-2025002:refs/remotes/origin/student-2025002") },
@@ -77,12 +77,6 @@ function refillRoutes(opts?: { branchMissing?: boolean; pullFail?: boolean; newF
     { match: cmd("checkout student-2025002") },
     { match: cmd("clean -fdX") },
     { match: cmd("pull origin student-2025002"), fail: opts?.pullFail ? { stderr: "CONFLICT" } : undefined },
-    { match: cmd("ls-tree --name-only origin/student-2025002 -- .gitignore .vscode/settings.json") },   // pullNewOnly rebase 前碰撞探测
-    { match: cmd("rebase origin/student-2025002"), fail: opts?.newOnlyFail ? { stderr: "CONFLICT" } : undefined },
-    { match: cmd("diff --diff-filter=A --name-only HEAD origin/main"), stdout: opts?.newFiles ?? "" },
-    { match: starts("ls-tree --name-only origin/main -- ") },   // main 新增文件 checkout 前碰撞探测
-    { match: starts("checkout origin/main -- ") },
-    { match: starts("commit -m pull:") },
   ];
 }
 
@@ -193,9 +187,9 @@ describe("archiveBeforeSwitch（阶段一：确认 + submitAll 归档）", () =>
 });
 
 // ── 阶段二 refillAfterSwitch（checkout 新分支 → 清理 → 同步）──────────────
-describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNewOnly）", () => {
-  it("正常链路：远端分支存在 + main 有新题 → 严格按序执行并汇总", async () => {
-    const rec = makeRecorder(refillRoutes({ newFiles: "week-04/new.py\n" }));
+describe("refillAfterSwitch（阶段二：checkout → clean → pull 本人分支；不自动拉取作业）", () => {
+  it("正常链路：远端分支存在 → 严格按序执行并通知（不跑 pullNewOnly）", async () => {
+    const rec = makeRecorder(refillRoutes());
     const { deps, messages } = makeAfterDeps(rec.git);
 
     await refillAfterSwitch(deps);
@@ -212,19 +206,11 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
       "clean -fdX",
       "rev-parse --verify origin/student-2025002",
       "pull origin student-2025002",
-      "fetch origin",
-      "rev-parse --verify origin/student-2025002",
-      "ls-tree --name-only origin/student-2025002 -- .gitignore .vscode/settings.json",
-      "rebase origin/student-2025002",
-      "diff --diff-filter=A --name-only HEAD origin/main",
-      "ls-tree --name-only origin/main -- week-04/new.py",
-      "checkout origin/main -- week-04/new.py",
-      "commit -m pull: 1 new file(s) from main",
     ]);
-    expect(messages).toEqual([{ warn: false, text: "已切换到 2025002 的作业目录：拉取新作业 1 个文件" }]);
+    expect(messages).toEqual([{ warn: false, text: "已切换到 2025002 的作业目录" }]);
   });
 
-  it("新学生首用（远端无分支）→ 自 origin/main 建分支、跳过 pull、仍同步新增", async () => {
+  it("新学生首用（远端无分支）→ 自 origin/main 建分支、跳过 pull", async () => {
     const rec = makeRecorder(refillRoutes({ branchMissing: true }));
     const { deps, messages } = makeAfterDeps(rec.git);
 
@@ -233,7 +219,7 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
     const seq = joined(rec.calls);
     expect(seq).toContain("branch --no-track student-2025002 origin/main");
     expect(seq).not.toContain("pull origin student-2025002");
-    expect(messages).toEqual([{ warn: false, text: "已切换到 2025002 的作业目录（暂无新作业）" }]);
+    expect(messages).toEqual([{ warn: false, text: "已切换到 2025002 的作业目录" }]);
   });
 
   it("checkout 新分支失败（fetch 断网）→ 警告并停止（不动工作区）", async () => {
@@ -256,7 +242,7 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
     expect(messages[0].text).toContain("准备作业目录失败");
   });
 
-  it("pull 远端提交失败 → 警告并停止（不再继续 pullNewOnly）", async () => {
+  it("pull 远端提交失败 → 警告并停止（分支已切换不回滚）", async () => {
     const rec = makeRecorder(refillRoutes({ pullFail: true }));
     const { deps, messages } = makeAfterDeps(rec.git);
 
@@ -264,27 +250,15 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
 
     const seq = joined(rec.calls);
     expect(seq).toContain("pull origin student-2025002");
-    expect(seq).not.toContain("diff --diff-filter=A --name-only HEAD origin/main");
     expect(messages[0].warn).toBe(true);
     expect(messages[0].text).toContain("恢复你在服务器上的作业失败");
-  });
-
-  it("pullNewOnly 失败 → 警告 + 仍有汇总（分支已切换不回滚）", async () => {
-    const rec = makeRecorder(refillRoutes({ newOnlyFail: true }));
-    const { deps, messages } = makeAfterDeps(rec.git);
-
-    await refillAfterSwitch(deps);
-
-    expect(messages).toHaveLength(2);
-    expect(messages[0]).toEqual({ warn: true, text: expect.stringContaining("同步新增作业失败") });
-    expect(messages[1]).toEqual({ warn: false, text: "已切换到 2025002 的作业目录（暂无新作业）" });
   });
 });
 
 // ── 共用机场景：A 的 untracked 自建文件经 add -A 归档后，checkout 新分支时消失 ──
 describe("共用机场景（A → B 切换全链）", () => {
   it("归档段 add -A + push student-2025001 在前，切换段 checkout student-2025002 + clean -fdX 在后", async () => {
-    const rec = makeRecorder([...archiveRoutes(), ...refillRoutes({ newFiles: "" })]);
+    const rec = makeRecorder([...archiveRoutes(), ...refillRoutes()]);
     const before = makeBeforeDeps(rec.git);
     const after = makeAfterDeps(rec.git);
 

@@ -118,6 +118,23 @@
           "when": "editorLangId == python",
           "group": "navigation@903"
         }
+      ],
+      "view/title": [
+        {
+          "command": "pylearner.submitExercise",
+          "when": "view == pylearner.chatView",
+          "group": "navigation@901"
+        },
+        {
+          "command": "pylearner.pullAssignments",
+          "when": "view == pylearner.chatView",
+          "group": "navigation@902"
+        },
+        {
+          "command": "pylearner.syncAssignments",
+          "when": "view == pylearner.chatView",
+          "group": "navigation@903"
+        }
       ]
     },
     "configuration": {
