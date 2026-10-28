@@ -269,6 +269,8 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     vscode.workspace.getConfiguration("pylearner").get<string>(CONFIG_KEYS.gitRepoUrl, "") ||
     (context.globalState.get<string>(STATE_KEYS.gitRepoUrl) ?? "");
   async function resolveGitEnv(): Promise<{ git: GitClient; remote: () => string; freshBootstrap: boolean } | null> {
+    // 等激活时的静默复核把 gitRepoUrl 刷完（最多 3s，通常 <200ms；超时放行，网络断了后面 git 命令会报明确错）
+    await Promise.race([gitRepoUrlReady, new Promise<void>(r => setTimeout(r, 3000))]);
     const root = vscode.workspace.workspaceFolders?.[0];
     if (!root) {
       void vscode.window.showWarningMessage("请先打开课堂文件夹（文件 → 打开文件夹）");
@@ -955,7 +957,8 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   });
 
   // 首启迁移旧 SecretStorage 身份；无身份 → 打开身份页；有身份 → 静默复核一次（A25）（V2.0：自动拉取已取消，仅按钮触发）
-  void (async () => {
+  // Promise 存下来让 resolveGitEnv 能等它把 gitRepoUrl 刷完（防止用户秒开文件夹时读到旧缓存）
+  const gitRepoUrlReady: Promise<void> = (async () => {
     try {
       await migrateLegacyIdentity(context.globalState, context.secrets, {
         studentId: SECRET_KEYS.studentId,
