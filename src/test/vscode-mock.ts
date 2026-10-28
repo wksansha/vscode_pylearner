@@ -21,6 +21,11 @@ vi.mock("vscode", () => ({
       };
     },
   },
+  languages: {
+    onDidChangeDiagnostics: vi.fn(() => ({ dispose: vi.fn() })),
+    getDiagnostics: vi.fn(),
+  },
+  DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
   workspace: {
     fs: {
       readFile: vi.fn(),
@@ -30,5 +35,8 @@ vi.mock("vscode", () => ({
       rename: vi.fn(),
       delete: vi.fn(),
     },
+    getConfiguration: vi.fn(() => ({ get: () => true })),
+    getWorkspaceFolder: vi.fn(() => undefined),
+    asRelativePath: vi.fn((uri: { fsPath: string }) => uri.fsPath.replace(/^\//, "")),
   },
 }));

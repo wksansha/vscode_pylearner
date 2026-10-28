@@ -30,12 +30,11 @@ function setupStartupLogger() {
 setupStartupLogger();
 
 import * as vscode from "vscode";
-import { CMD_IDS, CONFIG_KEYS, DEFAULT_TEACHER_URL, SECRET_KEYS, STATE_KEYS, VIEW_IDS } from "./constants";
+import { ARCHIVE_UPLOAD_DISABLED, CMD_IDS, CONFIG_KEYS, DEFAULT_TEACHER_URL, SECRET_KEYS, STATE_KEYS, VIEW_IDS } from "./constants";
 import { L1Writer } from "./storage/l1Writer";
 import { ChatStore } from "./storage/chatStore";
 import { LlmRouter } from "./llm/router";
 import { ChatViewProvider } from "./chat/chatProvider";
-import { createEditListener } from "./events/editListener";
 import { createRunListener } from "./events/runListener";
 import { createDiagnosticsListener } from "./events/diagnosticsListener";
 import { createBehaviorListener } from "./events/behaviorListener";
@@ -475,10 +474,12 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   };
   // —— L1 全量归档（spec：docs/superpowers/specs/2026-10-13-l1-trace-archive-design.md）——
   // 激活后 10s 归档一次（无定时器）；复用 teacher.url / teacher.enabled；失败静默下次激活补传
+  // 2026-10-28 事件降噪方案：归档补传停用（isEnabled 恒 false，runOnce 自检直接返回；本地 jsonl 照写留底）
   const traceArchiver = createTraceArchiver({
     globalStorageUri: context.globalStorageUri,
     teacherUrl: identityDeps.teacherUrl,
     isEnabled: () =>
+      !ARCHIVE_UPLOAD_DISABLED &&
       vscode.workspace
         .getConfiguration("pylearner")
         .get<boolean>(CONFIG_KEYS.teacherEnabled, true),
@@ -785,14 +786,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   log("[pylearner] profile refresher created");
 
   // Register event listeners
-  try {
-    context.subscriptions.push(createEditListener(l1Writer));
-    log("[pylearner] edit listener registered");
-  } catch (err) {
-    log("[pylearner] failed to register edit listener:", err);
-    throw err;
-  }
-
+  // 2026-10-28 事件降噪方案：edit 监听移除（编码动作轨迹对大屏/画像均无消费方，彻底移除）
   try {
     context.subscriptions.push(
       createRunListener(l1Writer, {
