@@ -34,24 +34,55 @@ export async function isGitWorkTree(cwd: string, exec: ExecFn = execFileAsync): 
 }
 
 /**
+ * 插件自产文件白名单：这些文件由扩展生成/维护（.gitignore 引导兜底、.vscode/settings.json 关原生 Git UI），
+ * 不承载学生数据。跨机器状态分裂（分支树 tracked、本地却是未跟踪副本）时，checkout/rebase 会被 git 的
+ * "未跟踪文件将被覆盖"安全规则整单拦截——见 clearUntrackedCollisions。
+ */
+export const PLUGIN_AUTO_FILES = [".gitignore", ".vscode/settings.json"] as const;
+
+/**
+ * 清除白名单文件中「目标树已跟踪、本地却是未跟踪副本」的碰撞（git 安全规则会因此拒绝 checkout/rebase）。
+ * 只动目标树 tracked ∩ 白名单的路径：clean -fx 不影响 tracked 文件，学生自建文件永不触碰；
+ * 目标树未跟踪白名单文件时零动作（保留本地副本，防 __pycache__ 失去忽略规则）。幂等。
+ */
+export async function clearUntrackedCollisions(git: GitClient, treeish: string, paths: ReadonlyArray<string>): Promise<void> {
+  if (paths.length === 0) return;
+  const tracked = new Set(
+    (await git.run(["ls-tree", "--name-only", treeish, "--", ...paths]))
+      .split("\n").map((s) => s.trim()).filter(Boolean),
+  );
+  const hits = paths.filter((p) => tracked.has(p));
+  if (hits.length > 0) await git.run(["clean", "-fx", "--", ...hits]);
+}
+
+/**
  * 课堂仓库首次引导（spec 4.1）：workspace 根为空或仅含 .vscode 时的等价 clone。
  * git clone 要求目标目录为空（存在 .vscode 即失败），故用 init + remote add + fetch + checkout
- * 等价实现：本地得到完整工作树与跟踪 origin/main 的 main 分支，学生分支随后自 origin/main 创建。
+ * 等价实现。落点（碰撞修复 2026-10-28）：远程学生分支已存在（换电脑/重装）→ 直接落到自己分支，
+ * 与一键换机同语义——空目录上 checkout 分支树，自产文件不会以未跟踪状态撞上分支 tracked 版本；
+ * 不存在（真新学生）→ 落 origin/main 基线，学生分支随后自 origin/main 创建。
  * token 随 URL 进入 .git/config 的 origin（读取通道）；push 一律用显式带凭证的 URL（见 commitOps）。
  */
-export async function bootstrapClone(cwd: string, url: string, exec: ExecFn = execFileAsync): Promise<void> {
+export async function bootstrapClone(cwd: string, url: string, studentId: string, exec: ExecFn = execFileAsync): Promise<void> {
   const git: GitClient = createGitClient(cwd, exec);
   await git.run(["init"]);
   // 中文文件名不做 quote 转义：diff --name-only 清单与 checkout 路径可直用（转义会破坏文件清单匹配）
   await git.run(["config", "core.quotepath", "false"]);
   await git.run(["remote", "add", "origin", url]);
   await git.run(["fetch", "origin"]);
-  await git.run(["checkout", "-B", "main", "origin/main"]);
-  // spec 4.1：引导完成即确保 .gitignore 存在，防 __pycache__ 等缓存垃圾被 add -A 归档并触发删除检测噪音。
-  // 已存在时（题库 main 自带）不得覆写——覆写会让 tracked 文件变"已修改"，后续拉取的 rebase 必被脏工作区拒绝
+  const branch = `student-${studentId}`;
+  const remoteBranch = await git.run(["rev-parse", "--verify", `origin/${branch}`]).catch(() => "");
+  if (remoteBranch.trim()) {
+    await git.run(["checkout", "-B", branch, "--track", `origin/${branch}`]);
+  } else {
+    await git.run(["checkout", "-B", "main", "origin/main"]);
+  }
+  // spec 4.1：引导完成即确保 .gitignore 存在，防 __pycache__ 等缓存垃圾被 add -A 归档并触发删除检测噪音；
+  // .vscode/ 规则防 disableNativeGitUi 写的 settings.json 被 add -A 收进分支（跨机器碰撞的污染源）。
+  // 已存在时（题库 main / 学生分支自带）不得覆写——覆写会让 tracked 文件变"已修改"，后续拉取的 rebase 必被脏工作区拒绝
   const gitignorePath = path.join(cwd, ".gitignore");
   if (!fs.existsSync(gitignorePath)) {
-    fs.writeFileSync(gitignorePath, "__pycache__/\n*.pyc\n.venv/\n", "utf8");
+    fs.writeFileSync(gitignorePath, "__pycache__/\n*.pyc\n.venv/\n.vscode/\n", "utf8");
   }
 }
 

@@ -1,5 +1,6 @@
 import type { GitClient, GitError } from "./gitClient";
 import { assertCurrentBranch } from "./branchOps";
+import { clearUntrackedCollisions, PLUGIN_AUTO_FILES } from "./gitEnv";
 
 /** porcelain 状态行删除检测（X=暂存区 Y=工作区，任一位为 D 即删除条目）。
  * 覆盖 D␣/␣D/MD/AD 全部组合（Task 345 遗留缺口：旧正则 /(^| )D / 漏 MD = 暂存修改+工作区删除）。 */
@@ -43,6 +44,9 @@ export async function submitAll(deps: SubmitDeps): Promise<SubmitResult> {
   // 首推守卫：远端学生分支尚不存在（首次 push 才创建）→ 跳过 rebase（否则 invalid upstream 被误判为 rebaseConflict，首推永远失败）
   const upstream = await git.run(["rev-parse", "--verify", `origin/${branch}`]).catch(() => "");
   if (upstream.trim()) {
+    // 自产文件碰撞清理：rebase 落分支树前清掉本地未跟踪副本（如 .vscode/settings.json 被新 .gitignore
+    // 规则转为 ignored 后，rebase 到仍 tracked 它的旧污染分支会被 git 安全规则拦截）
+    await clearUntrackedCollisions(git, `origin/${branch}`, PLUGIN_AUTO_FILES);
     try {
       await git.run(["rebase", `origin/${branch}`]);
     } catch {

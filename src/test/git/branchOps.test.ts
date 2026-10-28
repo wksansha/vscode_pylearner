@@ -30,6 +30,9 @@ function makeRecorder(routes: Route[]) {
 const cmd = (s: string) => (args: string[]) => args.join(" ") === s;
 const joined = (calls: string[][]) => calls.map((c) => c.join(" "));
 
+// checkout 前的自产文件碰撞探测（ls-tree 白名单路径），所有 ensureStudentBranch 用例都会触发
+const LS_TREE = "ls-tree --name-only student-2025001 -- .gitignore .vscode/settings.json";
+
 describe("ensureStudentBranch", () => {
   it("本地无 + 远端无 → 自 origin/main 建 --no-track 并 checkout（新学生首用；不配对 main 防裸 pull 合入教师分支）", async () => {
     const { calls, git } = makeRecorder([
@@ -37,6 +40,7 @@ describe("ensureStudentBranch", () => {
       { match: cmd("rev-parse --verify origin/student-2025001"), fail: { stderr: "fatal: ambiguous argument 'origin/student-2025001'" } },
       { match: cmd("branch --list student-2025001") },
       { match: cmd("branch --no-track student-2025001 origin/main") },
+      { match: cmd(LS_TREE) },
       { match: cmd("checkout student-2025001") },
     ]);
 
@@ -47,6 +51,7 @@ describe("ensureStudentBranch", () => {
       "rev-parse --verify origin/student-2025001",
       "branch --list student-2025001",
       "branch --no-track student-2025001 origin/main",
+      LS_TREE,
       "checkout student-2025001",
     ]);
   });
@@ -57,6 +62,7 @@ describe("ensureStudentBranch", () => {
       { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "a1b2c3d\n" },
       { match: cmd("branch --list student-2025001") },
       { match: cmd("branch --track student-2025001 origin/student-2025001") },
+      { match: cmd(LS_TREE) },
       { match: cmd("checkout student-2025001") },
     ]);
 
@@ -67,6 +73,7 @@ describe("ensureStudentBranch", () => {
       "rev-parse --verify origin/student-2025001",
       "branch --list student-2025001",
       "branch --track student-2025001 origin/student-2025001",
+      LS_TREE,
       "checkout student-2025001",
     ]);
   });
@@ -77,6 +84,7 @@ describe("ensureStudentBranch", () => {
       { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "a1b2c3d\n" },
       { match: cmd("branch --list student-2025001"), stdout: "* student-2025001\n" },
       { match: cmd("config branch.student-2025001.merge"), stdout: "refs/heads/student-2025001\n" },
+      { match: cmd(LS_TREE) },
       { match: cmd("checkout student-2025001") },
     ]);
 
@@ -87,6 +95,7 @@ describe("ensureStudentBranch", () => {
       "rev-parse --verify origin/student-2025001",
       "branch --list student-2025001",
       "config branch.student-2025001.merge",
+      LS_TREE,
       "checkout student-2025001",
     ]);
   });
@@ -98,12 +107,32 @@ describe("ensureStudentBranch", () => {
       { match: cmd("branch --list student-2025001"), stdout: "* student-2025001\n" },
       { match: cmd("config branch.student-2025001.merge"), stdout: "refs/heads/main\n" },
       { match: cmd("branch --set-upstream-to origin/student-2025001 student-2025001") },
+      { match: cmd(LS_TREE) },
       { match: cmd("checkout student-2025001") },
     ]);
 
     await ensureStudentBranch(git, "2025001");
 
     expect(joined(calls)).toContain("branch --set-upstream-to origin/student-2025001 student-2025001");
+  });
+
+  it("碰撞清理：分支树 tracked 自产文件而本地为未跟踪副本 → checkout 前触发 clean -fx 精确清道", async () => {
+    const { calls, git } = makeRecorder([
+      { match: cmd("fetch origin") },
+      { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "a1b2c3d\n" },
+      { match: cmd("branch --list student-2025001") },
+      { match: cmd("branch --track student-2025001 origin/student-2025001") },
+      { match: cmd(LS_TREE), stdout: ".gitignore\n.vscode/settings.json\n" },
+      { match: cmd("clean -fx -- .gitignore .vscode/settings.json") },
+      { match: cmd("checkout student-2025001") },
+    ]);
+
+    await ensureStudentBranch(git, "2025001");
+
+    const seq = joined(calls);
+    const cleanIdx = seq.indexOf("clean -fx -- .gitignore .vscode/settings.json");
+    expect(cleanIdx).toBeGreaterThan(seq.indexOf(LS_TREE));
+    expect(cleanIdx).toBeLessThan(seq.indexOf("checkout student-2025001"));
   });
 
   it("F1 幂等：同一入口重复调用 → 第二次不再建分支（branch 创建仅一次，checkout 可重复）", async () => {
@@ -120,6 +149,7 @@ describe("ensureStudentBranch", () => {
         throw err;   // 新学生首用：远端无分支
       }
       if (c === "branch --no-track student-2025001 origin/main") { created = true; return { stdout: "", stderr: "" }; }
+      if (c === LS_TREE) return { stdout: "", stderr: "" };
       if (c === "checkout student-2025001") return { stdout: "", stderr: "" };
       throw new Error(`no route for: git ${c}`);
     };

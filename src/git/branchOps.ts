@@ -1,4 +1,5 @@
 import type { GitClient } from "./gitClient";
+import { clearUntrackedCollisions, PLUGIN_AUTO_FILES } from "./gitEnv";
 
 export async function ensureStudentBranch(git: GitClient, studentId: string): Promise<void> {
   const branch = `student-${studentId}`;
@@ -22,6 +23,9 @@ export async function ensureStudentBranch(git: GitClient, studentId: string): Pr
       await git.run(["branch", "--set-upstream-to", `origin/${branch}`, branch]).catch(() => {});
     }
   }
+  // 自产文件碰撞清理（2026-10-28）：分支树 tracked 而本地未跟踪的 .gitignore/.vscode/settings.json
+  // 会让 checkout 被 git 安全规则整单拒绝——提前清掉未跟踪副本，让分支版本接管（学生文件不受影响）
+  await clearUntrackedCollisions(git, branch, PLUGIN_AUTO_FILES);
   await git.run(["checkout", branch]);
 }
 

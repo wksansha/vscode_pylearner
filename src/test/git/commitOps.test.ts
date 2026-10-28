@@ -11,6 +11,7 @@ interface Opts {
   rebaseFail?: boolean;
   firstPush?: boolean;   // 首推场景：远端学生分支尚不存在（首次 push 才创建）
   pushFail?: boolean;
+  lsTreeStdout?: string; // rebase 前碰撞探测：分支树 tracked 的白名单文件清单
   confirmDelete?: (n: number) => Promise<boolean>;
 }
 
@@ -33,6 +34,13 @@ function makeDeps(opts?: Opts) {
       return { stdout: "", stderr: "" };
     }
     if (c === "fetch origin") return { stdout: "", stderr: "" };
+    if (c === "ls-tree --name-only origin/student-2025001 -- .gitignore .vscode/settings.json") {
+      return { stdout: opts?.lsTreeStdout ?? "", stderr: "" };
+    }
+    if (c === "clean -fx -- .gitignore" || c === "clean -fx -- .vscode/settings.json"
+      || c === "clean -fx -- .gitignore .vscode/settings.json") {
+      return { stdout: "", stderr: "" };
+    }
     if (c === "rebase origin/student-2025001") {
       if (opts?.rebaseFail) {
         const err = new Error("git exited with code 1") as Error & { stdout: string; stderr: string };
@@ -103,12 +111,25 @@ describe("submitAll", () => {
       "commit -m submit: workspace by 2025001 张三 --author=2025001 张三 <2025001@classroom>",
       "fetch origin",
       "rev-parse --verify origin/student-2025001",
+      "ls-tree --name-only origin/student-2025001 -- .gitignore .vscode/settings.json",
       "rebase origin/student-2025001",
       "rev-parse HEAD",
       "rev-parse origin/student-2025001",
       "diff --name-only remote123 HEAD",
       "push https://2025001:tok@gitea.example/org/hw.git HEAD:refs/heads/student-2025001",
     ]);
+  });
+
+  it("碰撞清理：分支树 tracked 自产文件而本地为未跟踪副本 → rebase 前 clean -fx 清道后正常提交", async () => {
+    const { deps, calls } = makeDeps({ lsTreeStdout: ".vscode/settings.json\n" });
+
+    const res = await submitAll(deps);
+
+    expect(res).toEqual({ kind: "ok" });
+    const seq = joined(calls);
+    const cleanIdx = seq.indexOf("clean -fx -- .vscode/settings.json");
+    expect(cleanIdx).toBeGreaterThan(seq.indexOf("ls-tree --name-only origin/student-2025001 -- .gitignore .vscode/settings.json"));
+    expect(cleanIdx).toBeLessThan(seq.indexOf("rebase origin/student-2025001"));
   });
 
   it("首推（远端学生分支不存在）→ 跳过 rebase + ls-files 全量清单 + push 创建远端分支 → ok", async () => {

@@ -314,7 +314,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       try {
         await vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title: "正在初始化课堂仓库…" },
-          () => bootstrapClone(root.uri.fsPath, remote())
+          () => bootstrapClone(root.uri.fsPath, remote(), studentId)
         );
         bootstrapped = true;
       } catch (e) {
@@ -337,7 +337,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     // F2：committer 身份写仓库 local config，跟随当前身份（机房 git 常无全局 user.name/email，
     // 换学号后在此同步刷新；失败不阻断命令流，commit 阶段有明确报错兜底）
     await configureCommitter(git, id.studentId).catch(() => {});
-    // F1：bootstrap 停在 main → 立即幂等保障学生分支（失败静默，命令体内的 ensure 再兜底）
+    // F1：bootstrap 落点已按分支存在性分流（新学生停 main / 换机学生直落自己分支），此处幂等保障兜底（失败静默，命令体内的 ensure 再兜底）
     if (bootstrapped) await ensureStudentBranch(git, id.studentId).catch(() => {});
     // 新学生首用（刚 bootstrap 且远端学生分支不存在）：工作区已停在 origin/main 基线，
     // 后续增量拉取必为空转，调用方可据此跳过（老学生换机时远端分支存在，不置 true，增量拉取照常）

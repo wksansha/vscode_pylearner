@@ -53,6 +53,7 @@ function archiveRoutes(opts?: { branch?: string; status?: string; nothingToCommi
     },
     { match: cmd("fetch origin") },
     { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "remote123\n" },   // 首推守卫：远端分支存在 → rebase 照常执行
+    { match: cmd("ls-tree --name-only origin/student-2025001 -- .gitignore .vscode/settings.json") },   // rebase 前自产文件碰撞探测
     { match: cmd("rebase origin/student-2025001"), fail: opts?.rebaseFail ? { stderr: "CONFLICT (content)" } : undefined },
     { match: cmd("rebase --abort") },
     { match: cmd("rev-parse HEAD"), stdout: "feedc0de\n" },
@@ -70,11 +71,14 @@ function refillRoutes(opts?: { branchMissing?: boolean; pullFail?: boolean; newF
     { match: cmd("branch --list student-2025002") },
     { match: cmd("branch --track student-2025002 origin/student-2025002") },
     { match: cmd("branch --no-track student-2025002 origin/main") },
+    { match: cmd("ls-tree --name-only student-2025002 -- .gitignore .vscode/settings.json") },   // checkout 前自产文件碰撞探测
     { match: cmd("checkout student-2025002") },
     { match: cmd("clean -fdX") },
     { match: cmd("pull origin student-2025002"), fail: opts?.pullFail ? { stderr: "CONFLICT" } : undefined },
+    { match: cmd("ls-tree --name-only origin/student-2025002 -- .gitignore .vscode/settings.json") },   // pullNewOnly rebase 前碰撞探测
     { match: cmd("rebase origin/student-2025002"), fail: opts?.newOnlyFail ? { stderr: "CONFLICT" } : undefined },
     { match: cmd("diff --diff-filter=A --name-only HEAD origin/main"), stdout: opts?.newFiles ?? "" },
+    { match: starts("ls-tree --name-only origin/main -- ") },   // main 新增文件 checkout 前碰撞探测
     { match: starts("checkout origin/main -- ") },
     { match: starts("commit -m pull:") },
   ];
@@ -199,14 +203,17 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
       "rev-parse --verify origin/student-2025002",
       "branch --list student-2025002",
       "branch --track student-2025002 origin/student-2025002",
+      "ls-tree --name-only student-2025002 -- .gitignore .vscode/settings.json",
       "checkout student-2025002",
       "clean -fdX",
       "rev-parse --verify origin/student-2025002",
       "pull origin student-2025002",
       "fetch origin",
       "rev-parse --verify origin/student-2025002",
+      "ls-tree --name-only origin/student-2025002 -- .gitignore .vscode/settings.json",
       "rebase origin/student-2025002",
       "diff --diff-filter=A --name-only HEAD origin/main",
+      "ls-tree --name-only origin/main -- week-04/new.py",
       "checkout origin/main -- week-04/new.py",
       "commit -m pull: 1 new file(s) from main",
     ]);
