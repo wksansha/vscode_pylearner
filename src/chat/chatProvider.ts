@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { VIEW_IDS, MSG_TYPES } from "../constants";
+import { VIEW_IDS, MSG_TYPES, LITE_MODE } from "../constants";
 import { handleMessage } from "./messageHandler";
 import type { LlmRouter } from "../llm/router";
 import type { L1Writer } from "../storage/l1Writer";
@@ -60,6 +60,33 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private getHtml(webview: vscode.Webview): string {
+    // public-lite：AI 助教未启用，展示学生友好提示（不加载聊天应用）
+    if (LITE_MODE) {
+      return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+  <title>Python Learner</title>
+  <style>
+    body { margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center;
+           font-family: system-ui, sans-serif; color: var(--vscode-foreground); background: transparent; }
+    .card { text-align: center; padding: 0 24px; line-height: 1.7; }
+    .icon { font-size: 40px; margin-bottom: 12px; }
+    .title { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+    .desc { font-size: 13px; opacity: 0.75; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🚧</div>
+    <div class="title">AI 助教休息中</div>
+    <div class="desc">当前课堂为精简模式，暂未开启 AI 问答。<br>写代码遇到问题随时举手问老师～</div>
+  </div>
+</body>
+</html>`;
+    }
     const distUri = vscode.Uri.joinPath(
       this.context.extensionUri,
       "webview-ui",

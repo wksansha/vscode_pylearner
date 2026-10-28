@@ -25,11 +25,14 @@ export class L1Writer {
   private reporter?: TeacherReporter;
   private submissionHandler?: (event: TraceEvent) => void;
   private getIdentity?: IdentityProvider;
+  /** public-lite 精简模式：不写本地 jsonl，实时上报仅保留 run 与 behavior（登录态信号） */
+  private lite: boolean;
   // identity.json 变更检测（内存缓存，避免每事件读盘）
   private lastIdentityJson: string | null = null;
 
-  constructor(storageUri: vscode.Uri) {
+  constructor(storageUri: vscode.Uri, opts?: { lite?: boolean }) {
     this.baseUri = vscode.Uri.joinPath(storageUri, "trace");
+    this.lite = opts?.lite === true;
   }
 
   setTeacherReporter(reporter: TeacherReporter | undefined) {
@@ -54,6 +57,17 @@ export class L1Writer {
     const event = makeEvent(surface, kind, payload, () => ulid(), () =>
       new Date().toISOString(), sessionId
     );
+
+    // public-lite：不写本地 jsonl、不做提交通道分发；实时上报仅保留 run 与 behavior（登录态信号）
+    if (this.lite) {
+      if (surface === "run" || surface === "behavior") {
+        await this.reporter?.report(event).catch((err: unknown) => {
+          console.warn("[L1Writer] 教师端上报失败:", err instanceof Error ? err.message : String(err));
+        });
+      }
+      return;
+    }
+
     await this.writeEvent(event);
 
     // 异步上报到教师端（非阻塞，失败不影响 L1 持久化；全 surface 均上报，spec §6.2）

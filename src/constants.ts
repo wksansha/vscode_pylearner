@@ -34,11 +34,16 @@ export const CONFIG_KEYS = {
   gitRepoUrl: "pylearner.gitRepoUrl",
 } as const;
 
-// 课堂服务器地址（2.x 内网版：当前机房 192.168.1.254，双网卡服务器另一网段为 192.168.2.254）。
-// ⚠️ 换环境部署前改回实际服务端地址并重新打包（外网部署版 1.0.2 为 http://120.48.112.26:3002）；
+// —— public-lite 精简部署（本分支专属）——
+// 仅保留作业系统：实时上报只留 run 与 behavior（登录态信号），不写本地 jsonl、不归档上传、
+// F5 不发评审请求、聊天入口显示未启用提示。服务端需以 LITE_MODE=1 部署（public-lite 分支）。
+export const LITE_MODE = true;
+
+// 课堂服务器地址（1.x 公网版：百度云 http://120.48.112.26:3002）。
+// ⚠️ 换环境部署前改回实际服务端地址并重新打包（内网版 2.0.x 为 http://192.168.1.254:3000）；
 // package.json 里 pylearner.teacher.url 的 default 与此保持一致；
 // 特殊网络环境仍可用 settings.json 的 pylearner.teacher.url 覆盖。
-export const DEFAULT_TEACHER_URL = "http://192.168.1.254:3000";
+export const DEFAULT_TEACHER_URL = "http://120.48.112.26:3002";
 
 // API key lives in SecretStorage (never in settings.json — Settings Sync
 // would copy it to the user's account otherwise).

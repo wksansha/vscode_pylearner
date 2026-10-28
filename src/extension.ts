@@ -30,7 +30,7 @@ function setupStartupLogger() {
 setupStartupLogger();
 
 import * as vscode from "vscode";
-import { CMD_IDS, CONFIG_KEYS, DEFAULT_TEACHER_URL, SECRET_KEYS, STATE_KEYS, VIEW_IDS } from "./constants";
+import { CMD_IDS, CONFIG_KEYS, DEFAULT_TEACHER_URL, LITE_MODE, SECRET_KEYS, STATE_KEYS, VIEW_IDS } from "./constants";
 import { L1Writer } from "./storage/l1Writer";
 import { ChatStore } from "./storage/chatStore";
 import { LlmRouter } from "./llm/router";
@@ -135,7 +135,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   // Initialize core services - DEFER router creation until first use
-  const l1Writer = new L1Writer(context.globalStorageUri);
+  const l1Writer = new L1Writer(context.globalStorageUri, { lite: LITE_MODE });
   const chatStore = new ChatStore(context.globalStorageUri);
   log("[pylearner] core services initialized");
 
@@ -475,10 +475,12 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   };
   // —— L1 全量归档（spec：docs/superpowers/specs/2026-10-13-l1-trace-archive-design.md）——
   // 激活后 10s 归档一次（无定时器）；复用 teacher.url / teacher.enabled；失败静默下次激活补传
+  // public-lite：归档上传关闭（isEnabled 恒 false，runOnce 自检直接返回）
   const traceArchiver = createTraceArchiver({
     globalStorageUri: context.globalStorageUri,
     teacherUrl: identityDeps.teacherUrl,
     isEnabled: () =>
+      !LITE_MODE &&
       vscode.workspace
         .getConfiguration("pylearner")
         .get<boolean>(CONFIG_KEYS.teacherEnabled, true),
@@ -632,20 +634,23 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   const buildProjectSnapshot = (filePath: string, content: string) =>
     buildProjectSnapshotImpl(snapshotDeps, filePath, content);
   // F5 评审（spec 2.1）：filePath + commitHash 直连服务端；git rev-parse HEAD，非 git 仓库/失败 → ""
-  const reviewRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
-  const reviewGit = reviewRoot ? createGitClient(reviewRoot) : null;
-  const getCommitHash = async (): Promise<string> => reviewGit ? (await reviewGit.run(["rev-parse", "HEAD"])).trim() : "";
-  const reviewer = makeRunSuccessReviewer(
-    { teacherUrl: identityDeps.teacherUrl, getIdentity, buildProjectSnapshot,
-      workspaceRoot: () => reviewRoot, getCommitHash,
-      notify: (m, w) => void (w ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)) },
-    vscode, readFile,
-  );
-  l1Writer.setSubmissionHandler((ev) => {
-    const cfg = vscode.workspace.getConfiguration("pylearner");
-    if (!cfg.get<boolean>(CONFIG_KEYS.submissionEnabled, true)) return;
-    void reviewer(ev);   // 内部整体 try/catch
-  });
+  // public-lite：评审链路整体不装配（F5 运行成功不再发起评审请求）
+  if (!LITE_MODE) {
+    const reviewRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+    const reviewGit = reviewRoot ? createGitClient(reviewRoot) : null;
+    const getCommitHash = async (): Promise<string> => reviewGit ? (await reviewGit.run(["rev-parse", "HEAD"])).trim() : "";
+    const reviewer = makeRunSuccessReviewer(
+      { teacherUrl: identityDeps.teacherUrl, getIdentity, buildProjectSnapshot,
+        workspaceRoot: () => reviewRoot, getCommitHash,
+        notify: (m, w) => void (w ? vscode.window.showWarningMessage(m) : vscode.window.showInformationMessage(m)) },
+      vscode, readFile,
+    );
+    l1Writer.setSubmissionHandler((ev) => {
+      const cfg = vscode.workspace.getConfiguration("pylearner");
+      if (!cfg.get<boolean>(CONFIG_KEYS.submissionEnabled, true)) return;
+      void reviewer(ev);   // 内部整体 try/catch
+    });
+  }
 
   // 提交作业（spec 4.4）：add -A → commit → fetch+rebase → push 学生分支（提交事实以 git 历史为准，无服务端上报）
   context.subscriptions.push(
