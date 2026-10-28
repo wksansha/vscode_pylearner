@@ -56,6 +56,20 @@ export async function clearUntrackedCollisions(git: GitClient, treeish: string, 
 }
 
 /**
+ * fetch 收敛（2026-10-28 性能优化）：remote.origin.fetch 只配 main + 本人分支两条显式 refspec，
+ * 覆盖 git remote add 默认的全量通配（refs/heads/*）——课堂仓库全班共用一个仓库，学生越多分支越多，
+ * 全量 fetch 会把其他所有学生的提交历史也下载下来（学生只用自己分支，纯浪费带宽，初始化随班级规模线性变慢）。
+ * 收敛后每次 fetch origin 只传输 main 与本人分支。
+ * 幂等：--replace-all 清空旧配置（含共享电脑换人后残留的前任分支 refspec），--add 补本人分支。
+ * 本人分支远端尚不存在（新学生首推前）时该条 refspec 无匹配——git 对配置式 refspec 无匹配仅告警不报错，main 仍正常拉取。
+ */
+export async function configureStudentFetchRefSpec(git: GitClient, studentId: string): Promise<void> {
+  const branch = `student-${studentId}`;
+  await git.run(["config", "--replace-all", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main"]);
+  await git.run(["config", "--add", "remote.origin.fetch", `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
+}
+
+/**
  * 课堂仓库首次引导（spec 4.1）：workspace 根为空或仅含 .vscode 时的等价 clone。
  * git clone 要求目标目录为空（存在 .vscode 即失败），故用 init + remote add + fetch + checkout
  * 等价实现。落点（碰撞修复 2026-10-28）：远程学生分支已存在（换电脑/重装）→ 直接落到自己分支，
@@ -69,6 +83,7 @@ export async function bootstrapClone(cwd: string, url: string, studentId: string
   // 中文文件名不做 quote 转义：diff --name-only 清单与 checkout 路径可直用（转义会破坏文件清单匹配）
   await git.run(["config", "core.quotepath", "false"]);
   await git.run(["remote", "add", "origin", url]);
+  await configureStudentFetchRefSpec(git, studentId);   // fetch 收敛：只拉 main + 本人分支，不背全班历史
   await git.run(["fetch", "origin"]);
   const branch = `student-${studentId}`;
   const remoteBranch = await git.run(["rev-parse", "--verify", `origin/${branch}`]).catch(() => "");

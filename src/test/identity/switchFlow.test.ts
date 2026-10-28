@@ -66,6 +66,8 @@ function archiveRoutes(opts?: { branch?: string; status?: string; nothingToCommi
 /** 新学生 2025002 分支重建与同步所需路由 */
 function refillRoutes(opts?: { branchMissing?: boolean; pullFail?: boolean; newFiles?: string; newOnlyFail?: boolean }) {
   return [
+    { match: cmd("config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main") },   // ensureStudentBranch 开头幂等刷 refspec
+    { match: cmd("config --add remote.origin.fetch +refs/heads/student-2025002:refs/remotes/origin/student-2025002") },
     { match: cmd("fetch origin") },
     { match: cmd("rev-parse --verify origin/student-2025002"), stdout: opts?.branchMissing ? "" : "a1b2c3d\n" },
     { match: cmd("branch --list student-2025002") },
@@ -199,6 +201,8 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
     await refillAfterSwitch(deps);
 
     expect(joined(rec.calls)).toEqual([
+      "config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main",
+      "config --add remote.origin.fetch +refs/heads/student-2025002:refs/remotes/origin/student-2025002",
       "fetch origin",
       "rev-parse --verify origin/student-2025002",
       "branch --list student-2025002",
@@ -233,12 +237,20 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull → pullNe
   });
 
   it("checkout 新分支失败（fetch 断网）→ 警告并停止（不动工作区）", async () => {
-    const rec = makeRecorder([{ match: cmd("fetch origin"), fail: { stderr: "network down" } }]);
+    const rec = makeRecorder([
+      { match: cmd("config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main") },
+      { match: cmd("config --add remote.origin.fetch +refs/heads/student-2025002:refs/remotes/origin/student-2025002") },
+      { match: cmd("fetch origin"), fail: { stderr: "network down" } },
+    ]);
     const { deps, messages } = makeAfterDeps(rec.git);
 
     await refillAfterSwitch(deps);
 
-    expect(joined(rec.calls)).toEqual(["fetch origin"]);
+    expect(joined(rec.calls)).toEqual([
+      "config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main",
+      "config --add remote.origin.fetch +refs/heads/student-2025002:refs/remotes/origin/student-2025002",
+      "fetch origin",
+    ]);
     expect(messages).toHaveLength(1);
     expect(messages[0].warn).toBe(true);
     expect(messages[0].text).toContain("准备作业目录失败");

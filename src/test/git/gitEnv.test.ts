@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { remoteWithBasic, probeGit, isGitWorkTree, bootstrapClone, clearUntrackedCollisions, updateOriginUrl, configureCommitter, disableNativeGitUi } from "../../git/gitEnv";
+import { remoteWithBasic, probeGit, isGitWorkTree, bootstrapClone, clearUntrackedCollisions, updateOriginUrl, configureCommitter, configureStudentFetchRefSpec, disableNativeGitUi } from "../../git/gitEnv";
 import { createGitClient, type ExecFn } from "../../git/gitClient";
 
 const okExec = (async () => ({ stdout: "", stderr: "" })) as unknown as ExecFn;
@@ -59,6 +59,8 @@ describe("bootstrapClone（clone 要求空目录，.vscode-only 场景用 init+f
         "init",
         "config core.quotepath false",   // 中文文件名不转义，diff --name-only 清单与 checkout 路径可直用
         "remote add origin https://oauth2:tok@gitea.example/org/hw.git",
+        "config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main",
+        "config --add remote.origin.fetch +refs/heads/student-2025001:refs/remotes/origin/student-2025001",
         "fetch origin",
         "rev-parse --verify origin/student-2025001",   // 落点探测：远程学生分支不存在
         "checkout -B main origin/main",
@@ -124,6 +126,8 @@ describe("bootstrapClone（clone 要求空目录，.vscode-only 场景用 init+f
         "init",
         "config core.quotepath false",
         "remote add origin https://oauth2:tok@gitea.example/org/hw.git",
+        "config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main",
+        "config --add remote.origin.fetch +refs/heads/student-2025001:refs/remotes/origin/student-2025001",
         "fetch origin",
       ]);
       expect(fs.existsSync(path.join(dir, ".gitignore"))).toBe(false);
@@ -211,6 +215,20 @@ describe("updateOriginUrl", () => {
     await updateOriginUrl(createGitClient("C:/ws", exec), "https://oauth2:newtok@gitea.example/org/hw.git");
 
     expect(calls.map((c) => c.join(" "))).toEqual(["remote set-url origin https://oauth2:newtok@gitea.example/org/hw.git"]);
+  });
+});
+
+describe("configureStudentFetchRefSpec（fetch 收敛：只拉 main + 本人分支，不背全班历史）", () => {
+  it("按序两条：--replace-all 覆盖默认全量通配为 main，--add 补本人分支", async () => {
+    const calls: string[][] = [];
+    const exec: ExecFn = async (_file, args) => { calls.push([...args]); return { stdout: "", stderr: "" }; };
+
+    await configureStudentFetchRefSpec(createGitClient("C:/ws", exec), "2025001");
+
+    expect(calls.map((c) => c.join(" "))).toEqual([
+      "config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main",
+      "config --add remote.origin.fetch +refs/heads/student-2025001:refs/remotes/origin/student-2025001",
+    ]);
   });
 });
 

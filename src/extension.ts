@@ -268,7 +268,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
   const gitRepoUrl = () =>
     vscode.workspace.getConfiguration("pylearner").get<string>(CONFIG_KEYS.gitRepoUrl, "") ||
     (context.globalState.get<string>(STATE_KEYS.gitRepoUrl) ?? "");
-  async function resolveGitEnv(): Promise<{ git: GitClient; remote: () => string; freshBootstrap: boolean } | null> {
+  async function resolveGitEnv(): Promise<{ git: GitClient; remote: () => string; bootstrapped: boolean; freshBootstrap: boolean } | null> {
     // 等激活时的静默复核把 gitRepoUrl 刷完（最多 3s，通常 <200ms；超时放行，网络断了后面 git 命令会报明确错）
     await Promise.race([gitRepoUrlReady, new Promise<void>(r => setTimeout(r, 3000))]);
     const root = vscode.workspace.workspaceFolders?.[0];
@@ -307,7 +307,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         return null;
       }
       const pick = await vscode.window.showInformationMessage(
-        "工作区尚未初始化课堂仓库，立即初始化（将拉取全部作业历史）？",
+        "工作区尚未初始化课堂仓库，立即初始化（下载教师作业与你的分支）？",
         { modal: true },
         "立即初始化"
       );
@@ -343,7 +343,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     // 新学生首用（刚 bootstrap 且远端学生分支不存在）：工作区已停在 origin/main 基线，
     // 后续增量拉取必为空转，调用方可据此跳过（老学生换机时远端分支存在，不置 true，增量拉取照常）
     const freshBootstrap = bootstrapped && !(await remoteStudentBranchExists(git, id.studentId).catch(() => false));
-    return { git, remote, freshBootstrap };
+    return { git, remote, bootstrapped, freshBootstrap };
   }
   // 提交删除确认（spec 4.4 第 2 步）：提交按钮与一键换机归档共用
   const confirmDeleteModal = async (n: number): Promise<boolean> => {
@@ -707,11 +707,17 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       if (!env) return;
       const id = loadStudentIdentity(context.globalState);
       if (!id.studentId) return;
-      // 新学生首用（freshBootstrap）：bootstrap 已 checkout origin/main 基线并建好学生分支，
-      // 增量拉取（ensure + fetch + diff）必为空转，直接提示就绪；换机（远端分支存在）照常走增量拉取
-      if (env.freshBootstrap) {
-        void vscode.window.showInformationMessage(`课堂仓库已初始化，作业已就绪（分支 student-${id.studentId}）`);
-        return;
+      // 初始化刚完成（2026-10-28 体验优化）：到此为止，不自动接增量拉取——
+      // 换机学生（远程分支已存在）bootstrap 已直落同步，紧接的增量拉取纯属重复 fetch；新学生问一句要不要拉
+      if (env.bootstrapped) {
+        if (env.freshBootstrap) {
+          const pick = await vscode.window.showInformationMessage("仓库已初始化完成，是否拉取作业？", "拉取作业");
+          if (pick !== "拉取作业") return;
+          // 选「拉取作业」→ 落到下方正常增量拉取（基线已含当前作业，结果多为"暂无新作业"）
+        } else {
+          void vscode.window.showInformationMessage(`课堂仓库已初始化，作业分支已同步（student-${id.studentId}）`);
+          return;
+        }
       }
       // 脏工作区守卫：rebase 前置条件是工作区干净，未提交的已跟踪修改会让拉取被 git 直接拒绝。
       // 只算已跟踪修改（?? 开头的未跟踪新文件不阻塞 rebase，不误伤题库 main 无 .gitignore 时引导写入的新文件）

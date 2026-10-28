@@ -1,8 +1,10 @@
 import type { GitClient } from "./gitClient";
-import { clearUntrackedCollisions, PLUGIN_AUTO_FILES } from "./gitEnv";
+import { clearUntrackedCollisions, configureStudentFetchRefSpec, PLUGIN_AUTO_FILES } from "./gitEnv";
 
 export async function ensureStudentBranch(git: GitClient, studentId: string): Promise<void> {
   const branch = `student-${studentId}`;
+  // refspec 跟随当前身份（幂等）：共享电脑换人后收敛为新人的 main+本人分支，存量全量 refspec 也在首次调用时迁移
+  await configureStudentFetchRefSpec(git, studentId);
   await git.run(["fetch", "origin"]);
   const remote = await git.run(["rev-parse", "--verify", `origin/${branch}`]).catch(() => "");
   const local = await git.run(["branch", "--list", branch]);

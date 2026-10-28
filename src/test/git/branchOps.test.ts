@@ -33,9 +33,17 @@ const joined = (calls: string[][]) => calls.map((c) => c.join(" "));
 // checkout 前的自产文件碰撞探测（ls-tree 白名单路径），所有 ensureStudentBranch 用例都会触发
 const LS_TREE = "ls-tree --name-only student-2025001 -- .gitignore .vscode/settings.json";
 
+// configureStudentFetchRefSpec（ensureStudentBranch 开头幂等刷 refspec）的两条 config 命令
+const REFSPEC = [
+  "config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main",
+  "config --add remote.origin.fetch +refs/heads/student-2025001:refs/remotes/origin/student-2025001",
+];
+
 describe("ensureStudentBranch", () => {
   it("本地无 + 远端无 → 自 origin/main 建 --no-track 并 checkout（新学生首用；不配对 main 防裸 pull 合入教师分支）", async () => {
     const { calls, git } = makeRecorder([
+      { match: cmd(REFSPEC[0]) },
+      { match: cmd(REFSPEC[1]) },
       { match: cmd("fetch origin") },
       { match: cmd("rev-parse --verify origin/student-2025001"), fail: { stderr: "fatal: ambiguous argument 'origin/student-2025001'" } },
       { match: cmd("branch --list student-2025001") },
@@ -47,6 +55,7 @@ describe("ensureStudentBranch", () => {
     await ensureStudentBranch(git, "2025001");
 
     expect(joined(calls)).toEqual([
+      ...REFSPEC,
       "fetch origin",
       "rev-parse --verify origin/student-2025001",
       "branch --list student-2025001",
@@ -58,6 +67,8 @@ describe("ensureStudentBranch", () => {
 
   it("本地无 + 远端有 → 基于 origin/student-X 建 --track（换电脑场景，保住历史且配对正确）", async () => {
     const { calls, git } = makeRecorder([
+      { match: cmd(REFSPEC[0]) },
+      { match: cmd(REFSPEC[1]) },
       { match: cmd("fetch origin") },
       { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "a1b2c3d\n" },
       { match: cmd("branch --list student-2025001") },
@@ -69,6 +80,7 @@ describe("ensureStudentBranch", () => {
     await ensureStudentBranch(git, "2025001");
 
     expect(joined(calls)).toEqual([
+      ...REFSPEC,
       "fetch origin",
       "rev-parse --verify origin/student-2025001",
       "branch --list student-2025001",
@@ -80,6 +92,8 @@ describe("ensureStudentBranch", () => {
 
   it("本地已有 + 配对正确 → 只 checkout（幂等零开销，不做修复）", async () => {
     const { calls, git } = makeRecorder([
+      { match: cmd(REFSPEC[0]) },
+      { match: cmd(REFSPEC[1]) },
       { match: cmd("fetch origin") },
       { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "a1b2c3d\n" },
       { match: cmd("branch --list student-2025001"), stdout: "* student-2025001\n" },
@@ -91,6 +105,7 @@ describe("ensureStudentBranch", () => {
     await ensureStudentBranch(git, "2025001");
 
     expect(joined(calls)).toEqual([
+      ...REFSPEC,
       "fetch origin",
       "rev-parse --verify origin/student-2025001",
       "branch --list student-2025001",
@@ -102,6 +117,8 @@ describe("ensureStudentBranch", () => {
 
   it("存量修复：本地已有但 upstream 配错（继承 main）→ set-upstream-to 纠正为自己的远端分支", async () => {
     const { calls, git } = makeRecorder([
+      { match: cmd(REFSPEC[0]) },
+      { match: cmd(REFSPEC[1]) },
       { match: cmd("fetch origin") },
       { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "a1b2c3d\n" },
       { match: cmd("branch --list student-2025001"), stdout: "* student-2025001\n" },
@@ -118,6 +135,8 @@ describe("ensureStudentBranch", () => {
 
   it("碰撞清理：分支树 tracked 自产文件而本地为未跟踪副本 → checkout 前触发 clean -fx 精确清道", async () => {
     const { calls, git } = makeRecorder([
+      { match: cmd(REFSPEC[0]) },
+      { match: cmd(REFSPEC[1]) },
       { match: cmd("fetch origin") },
       { match: cmd("rev-parse --verify origin/student-2025001"), stdout: "a1b2c3d\n" },
       { match: cmd("branch --list student-2025001") },
@@ -141,6 +160,7 @@ describe("ensureStudentBranch", () => {
     const exec: ExecFn = async (_file, args) => {
       calls.push([...args]);
       const c = args.join(" ");
+      if (c === REFSPEC[0] || c === REFSPEC[1]) return { stdout: "", stderr: "" };
       if (c === "fetch origin") return { stdout: "", stderr: "" };
       if (c === "branch --list student-2025001") return { stdout: created ? "* student-2025001\n" : "", stderr: "" };
       if (c === "rev-parse --verify origin/student-2025001") {
