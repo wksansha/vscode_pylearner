@@ -399,24 +399,38 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
     }
   };
 
-  // 身份保存后的引导（2026-10-28 调整：拉取作业不再自动触发）：
-  // 无工作区 → 引导选作业目录（选完整窗重载，激活流程续跑再问询）；已有工作区（空文件夹）→ 直接问是否立即拉取。
+  // 选作业目录 + 整窗重载（intro 因场景而异：首次配置 / 当前文件夹不可用）
+  const pickFolderAndReload = async (intro: string): Promise<void> => {
+    const pick = await vscode.window.showInformationMessage(intro, { modal: true }, "选择文件夹");
+    if (pick !== "选择文件夹") return;
+    const folder = await pickEmptyWorkspaceFolder();
+    if (!folder) return;
+    await context.globalState.update(STATE_KEYS.onboardingPending, true);
+    await vscode.commands.executeCommand("vscode.openFolder", folder, { forceNewWindow: false });
+  };
+
+  // 身份保存后的引导（2026-10-28 调整：拉取作业不再自动触发），三分流：
+  // ① 无工作区 → 引导选作业目录（选完整窗重载，激活流程续跑再问询）
+  // ② 有工作区但是非仓库的非空目录（其他文件）→ 提示不可用，引导换空文件夹
+  // ③ 课堂仓库（增量拉取）或非仓库空目录（拉取即初始化）→ 问句引导「是否立即拉取作业」
   // 平台行为：空窗口加入首个工作区文件夹会重启扩展宿主（updateWorkspaceFolders 也不例外），
   // 内存中的会话确认态与进行中的操作全部丢失——因此选完目录用 openFolder 整窗重载（确定性路径），
   // 先落 onboardingPending 标记，重载后由激活流程续跑（补会话确认 + 问句引导），见下方首启检查。
   const guideFolderAfterSave = async (name: string): Promise<void> => {
-    if (!vscode.workspace.workspaceFolders?.length) {
-      const pick = await vscode.window.showInformationMessage(
-        "身份设置成功！最后一步：选择一个空文件夹作为你的作业目录，作业代码将存放在这里",
-        { modal: true },
-        "选择文件夹"
-      );
-      if (pick !== "选择文件夹") return;
-      const folder = await pickEmptyWorkspaceFolder();
-      if (!folder) return;
-      await context.globalState.update(STATE_KEYS.onboardingPending, true);
-      await vscode.commands.executeCommand("vscode.openFolder", folder, { forceNewWindow: false });
+    const root = vscode.workspace.workspaceFolders?.[0];
+    if (!root) {
+      await pickFolderAndReload("身份设置成功！最后一步：选择一个空文件夹作为你的作业目录，作业代码将存放在这里");
       return;
+    }
+    if (!(await isGitWorkTree(root.uri.fsPath))) {
+      const entries = await vscode.workspace.fs.readDirectory(root.uri).then(
+        (e) => e,
+        () => [] as [string, vscode.FileType][],
+      );
+      if (!entries.every(([n]) => n === ".vscode")) {
+        await pickFolderAndReload("当前文件夹不是空的，无法用作作业目录。请选择一个空文件夹，作业代码将存放在那里");
+        return;
+      }
     }
     await offerFirstPull(name);
   };
@@ -988,11 +1002,7 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
         const pendingId = loadStudentIdentity(context.globalState);
         if (pendingId.studentId) {
           sessionGate?.markConfirmed();
-          if (vscode.workspace.workspaceFolders?.length) {
-            void offerFirstPull(pendingId.studentName || pendingId.studentId);
-          } else {
-            void guideFolderAfterSave(pendingId.studentName || pendingId.studentId);   // 极少数：文件夹未随重载持久化，重新引导选择
-          }
+          void guideFolderAfterSave(pendingId.studentName || pendingId.studentId);   // 三分流已内聚：问句/换目录引导
           return;
         }
       }
