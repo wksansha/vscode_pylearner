@@ -1,83 +1,40 @@
-# Python Learner
+# Python Learner（课堂助手学生端）
 
-AI 驱动的 Python 学习伴侣 —— VS Code 扩展。在陪伴学习者聊天的同时，自动记录学习行为轨迹（L1 trace），供后续分析学习过程。
+AI 驱动的 Python 学习伴侣：课堂作业管理与 AI 学习陪伴二合一。
 
-## 功能
+## 课堂作业
 
-- **AI 聊天侧栏**：内置 Webview 聊天界面，支持流式回复、多会话管理（历史恢复/删除）；LLM 后端可选 vscode-lm / Ollama / OpenAI 兼容 API（DeepSeek 等）
-- **学习行为监听**（L1 trace，全部使用 VS Code 稳定 API）：
+- **设置身份**：右下角输入学号与姓名（需与教师导入的花名册匹配），零配置领取 Git 凭证
+- **拉取作业**：一键拉取教师发布的最新题目（新增文件不覆盖你的修改）
+- **提交作业**：一键归档全部练习到你的个人分支，重复提交自动跳过无变更内容
+- **同步作业**：误删文件可一键还原到服务器上已保存的状态
+- **AI 评审**：F5 运行成功自动触发代码评审，通过 / 不通过 / 未判定三态，结果实时同步课堂大屏
+- **一键换机**：换电脑或共用机房电脑时，切换学号即可恢复你的全部作业历史
 
-| surface | 事件 | 触发条件 |
-|---|---|---|
-| edit | `code_change` | .py 文件有意义的内容变更（500ms 防抖批量；过滤单字符打字/退格噪音） |
-| edit | `file_save` | .py 文件保存 |
-| diag | `diagnostics_change` | 诊断问题出现/变化/清零（1.5s 防抖，仅变化时写，含前 5 条错误样例） |
-| run | `execution_success` / `execution_error` | Python 任务运行（Run Task、▶ 按钮；shell integration 不可用时的回退路径） |
-| run | `execution_success` / `execution_error` | 终端 python 命令（主路径；失败时解析输出尾部，提取 `error_type`/`error_message`/`file`/`line`） |
-| debug | `session_start` / `session_end` | F5 调试会话（稳定 API 无退出码，不判断成败；带 `session_id`） |
-| debug | `breakpoint_change` | 断点增删改（仅 .py，含位置与计数） |
-| chat | `user_message` / `assistant_response` | 聊天消息（带顶层 `session_id`） |
+## AI 学习陪伴
 
-同一运行只记录一次：终端 shell execution 为主记录路径，task 事件为回退路径（task 启动时"收养"无主终端执行，配对不受事件先后顺序影响）。
+- **AI 聊天侧栏**：流式回复、多会话管理；默认经课堂服务器代理（学生零配置），也可切换 vscode-lm / Ollama / OpenAI 兼容 API
+- **学习画像**：根据练习记录自动整理知识点掌握情况与薄弱项，支持可视化 Memory Graph
+
+## 数据与隐私
+
+扩展会将学习行为事件（编辑/运行/诊断/聊天/登录心跳）上报到课堂服务器，用于教师端实时了解班级学习进度：
+
+- 上报目的地由 `pylearner.teacher.url` 配置（默认为本课程部署的课堂服务器）
+- 通过设置 `pylearner.teacher.enabled = false` 可完全关闭上报
+- 事件同时在本地留有 JSONL 副本（`globalStorage` 目录），可随时查看
+- Git 凭证存于 VS Code SecretStorage（系统凭据库），不落 settings.json、不参与 Settings Sync
 
 ## 环境要求
 
 - VS Code ≥ 1.96
-- （终端运行监听）终端 shell 需支持 shell integration：PowerShell / Git Bash 等；**cmd 不支持**
-
-## 开发
-
-```bash
-npm install        # 根目录依赖
-cd webview-ui && npm install   # Webview 前端依赖
-```
-
-F5 启动 Extension Development Host（preLaunchTask 会自动构建 webview 与扩展）。
-
-验证命令：
-
-```bash
-npx tsc --noEmit   # 类型检查
-npm run compile    # esbuild 构建扩展
-```
-
-## 数据格式（L1 trace）
-
-事件按天写入 JSONL（每行一个 JSON 对象）：
-
-```
-%APPDATA%\Code\User\globalStorage\deeptutor.vscode-pylearner\
-├── trace\<surface>\YYYY-MM-DD.jsonl    # 事件流：edit / run / chat / debug / diag
-└── chats\sessions\<session-id>.json     # 完整聊天会话
-```
-
-事件结构（`session_id` 为顶层字段，对齐 DeepTutor 的 TraceEvent 形状）：
-
-```json
-{"id":"run:01KZW...","ts":"2026-08-24T06:31:14.754Z","surface":"run","kind":"execution_error","payload":{"source":"terminal","command":"python -c \"1/0\"","exit_code":1,"error_type":"ZeroDivisionError","error_message":"division by zero","file":"<string>","line":1}}
-```
-
-失败的运行事件会从终端输出尾部（≤2000 字符，ANSI 清洗后）解析 Python traceback，提取 `error_type` / `error_message` / `file` / `line`。解析失败时以 `output_chars` 诊断字段标注（0 = 输出流未获取到，>0 = 有输出但未匹配到异常签名）。
-
-## 配置
-
-| 设置 | 默认 | 说明 |
-|---|---|---|
-| `pylearner.llm.provider` | `vscode-lm` | `vscode-lm` / `ollama` / `openai` |
-| `pylearner.llm.model` | — | 模型名（如 `deepseek-chat`） |
-| `pylearner.llm.baseUrl` | `http://localhost:11434` | Ollama / OpenAI 兼容 API 地址 |
-| `pylearner.monitor.editEnabled` | `true` | 监听编辑/保存/诊断 |
-| `pylearner.monitor.runEnabled` | `true` | 监听运行/调试/断点 |
-
-API Key 不落 settings.json：通过插件的 ⚙ 设置面板保存，存入 VS Code **SecretStorage**（系统凭据库，Settings Sync 不会同步）。
-
-命令面板：`Python Learner: Open Chat` / `New Chat` / `Toggle Monitoring` / `Settings`。
+- 本机安装 Git（课堂镜像已预装；缺失时扩展会引导安装）
 
 ## 已知限制
 
-- 终端监听依赖 shell integration 命令检测；**命令必须实际执行才会被记录**（如粘贴时缺结尾引号导致命令未执行，不会产生事件）
-- cmd 终端不支持 shell integration，不产生终端事件（▶ 按钮不受影响，其走内部任务路径）
-- F5 调试的稳定 API 不提供退出码，调试事件只记开始/结束
-- 输出提取依赖 `TerminalShellExecution.read()` 流；个别终端组合下流可能不可用，此时失败事件带 `output_chars: 0` 诊断标记
-- 长驻 Python 任务（如 `uvicorn`）活跃期间，新启动的终端命令可能被关联到该任务（去重配对按"最近启动的任务"匹配）
-- PowerShell 5.1 原生参数传递存在拆分 quirk，插件记录的是真实退出码
+- F5 调试的稳定 API 不提供退出码，调试事件只记录开始/结束
+- 终端运行监听依赖 shell integration（PowerShell / Git Bash 支持，cmd 不支持）
+
+## License
+
+[Apache-2.0](./LICENSE)
