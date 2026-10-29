@@ -67,6 +67,7 @@ function archiveRoutes(opts?: { branch?: string; status?: string; nothingToCommi
 function refillRoutes(opts?: { branchMissing?: boolean; pullFail?: boolean }) {
   return [
     { match: cmd("config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main") },   // ensureStudentBranch 开头幂等刷 refspec
+    { match: cmd("ls-remote origin refs/heads/student-2025002"), stdout: opts?.branchMissing ? "" : "a1b2c3d\n" },   // 探测远端分支，不存在则不加本人分支 refspec
     { match: cmd("config --add remote.origin.fetch +refs/heads/student-2025002:refs/remotes/origin/student-2025002") },
     { match: cmd("fetch origin") },
     { match: cmd("rev-parse --verify origin/student-2025002"), stdout: opts?.branchMissing ? "" : "a1b2c3d\n" },
@@ -196,6 +197,7 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull 本人分�
 
     expect(joined(rec.calls)).toEqual([
       "config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main",
+      "ls-remote origin refs/heads/student-2025002",
       "config --add remote.origin.fetch +refs/heads/student-2025002:refs/remotes/origin/student-2025002",
       "fetch origin",
       "rev-parse --verify origin/student-2025002",
@@ -225,7 +227,7 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull 本人分�
   it("checkout 新分支失败（fetch 断网）→ 警告并停止（不动工作区）", async () => {
     const rec = makeRecorder([
       { match: cmd("config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main") },
-      { match: cmd("config --add remote.origin.fetch +refs/heads/student-2025002:refs/remotes/origin/student-2025002") },
+      { match: cmd("ls-remote origin refs/heads/student-2025002") },
       { match: cmd("fetch origin"), fail: { stderr: "network down" } },
     ]);
     const { deps, messages } = makeAfterDeps(rec.git);
@@ -234,7 +236,7 @@ describe("refillAfterSwitch（阶段二：checkout → clean → pull 本人分�
 
     expect(joined(rec.calls)).toEqual([
       "config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main",
-      "config --add remote.origin.fetch +refs/heads/student-2025002:refs/remotes/origin/student-2025002",
+      "ls-remote origin refs/heads/student-2025002",
       "fetch origin",
     ]);
     expect(messages).toHaveLength(1);

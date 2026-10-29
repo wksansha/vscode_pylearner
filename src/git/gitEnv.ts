@@ -60,13 +60,20 @@ export async function clearUntrackedCollisions(git: GitClient, treeish: string, 
  * 覆盖 git remote add 默认的全量通配（refs/heads/*）——课堂仓库全班共用一个仓库，学生越多分支越多，
  * 全量 fetch 会把其他所有学生的提交历史也下载下来（学生只用自己分支，纯浪费带宽，初始化随班级规模线性变慢）。
  * 收敛后每次 fetch origin 只传输 main 与本人分支。
- * 幂等：--replace-all 清空旧配置（含共享电脑换人后残留的前任分支 refspec），--add 补本人分支。
- * 本人分支远端尚不存在（新学生首推前）时该条 refspec 无匹配——git 对配置式 refspec 无匹配仅告警不报错，main 仍正常拉取。
+ * 幂等：--replace-all 清空旧配置（含共享电脑换人后残留的前任分支 refspec）。
+ * 本人分支 refspec 需先探测远端（2026-10-29 修复）：新学生远端分支尚不存在（首推前）时，配置里挂一条
+ * 无匹配 refspec 会让 git fetch 直接 fatal「couldn't find remote ref refs/heads/student-<id>」（git 2.54
+ * 实测，此前“仅告警不报错”的假设不成立，新学生初始化/拉取/提交全挂）——先 ls-remote 探测（不存在时
+ * 返回空且退出 0，凭证随 origin URL），存在才加该条；学生首推后下次调用自动探测到并补上，
+ * 断网探测失败同“不存在”处理，后续 fetch 自会暴露真实网络错误。
  */
 export async function configureStudentFetchRefSpec(git: GitClient, studentId: string): Promise<void> {
   const branch = `student-${studentId}`;
   await git.run(["config", "--replace-all", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main"]);
-  await git.run(["config", "--add", "remote.origin.fetch", `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
+  const remoteHasBranch = (await git.run(["ls-remote", "origin", `refs/heads/${branch}`]).catch(() => "")).trim();
+  if (remoteHasBranch) {
+    await git.run(["config", "--add", "remote.origin.fetch", `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
+  }
 }
 
 /**

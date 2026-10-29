@@ -60,7 +60,7 @@ describe("bootstrapClone（clone 要求空目录，.vscode-only 场景用 init+f
         "config core.quotepath false",   // 中文文件名不转义，diff --name-only 清单与 checkout 路径可直用
         "remote add origin https://oauth2:tok@gitea.example/org/hw.git",
         "config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main",
-        "config --add remote.origin.fetch +refs/heads/student-2025001:refs/remotes/origin/student-2025001",
+        "ls-remote origin refs/heads/student-2025001",   // 探测：远端分支不存在 → 不加本人分支 refspec（无匹配 refspec 会让 fetch fatal）
         "fetch origin",
         "rev-parse --verify origin/student-2025001",   // 落点探测：远程学生分支不存在
         "checkout -B main origin/main",
@@ -77,6 +77,7 @@ describe("bootstrapClone（clone 要求空目录，.vscode-only 场景用 init+f
       const calls: string[][] = [];
       const exec: ExecFn = async (_file, args) => {
         calls.push([...args]);
+        if (args.join(" ") === "ls-remote origin refs/heads/student-2025001") return { stdout: "a1b2c3d\n", stderr: "" };
         if (args.join(" ") === "rev-parse --verify origin/student-2025001") return { stdout: "a1b2c3d\n", stderr: "" };
         return { stdout: "", stderr: "" };
       };
@@ -84,6 +85,7 @@ describe("bootstrapClone（clone 要求空目录，.vscode-only 场景用 init+f
       await bootstrapClone(dir, "https://oauth2:tok@gitea.example/org/hw.git", "2025001", exec);
 
       const seq = calls.map((c) => c.join(" "));
+      expect(seq).toContain("config --add remote.origin.fetch +refs/heads/student-2025001:refs/remotes/origin/student-2025001");
       expect(seq).toContain("checkout -B student-2025001 --track origin/student-2025001");
       expect(seq.some((c) => c === "checkout -B main origin/main")).toBe(false);
       expect(seq.indexOf("rev-parse --verify origin/student-2025001")).toBeLessThan(seq.indexOf("checkout -B student-2025001 --track origin/student-2025001"));
@@ -127,7 +129,7 @@ describe("bootstrapClone（clone 要求空目录，.vscode-only 场景用 init+f
         "config core.quotepath false",
         "remote add origin https://oauth2:tok@gitea.example/org/hw.git",
         "config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main",
-        "config --add remote.origin.fetch +refs/heads/student-2025001:refs/remotes/origin/student-2025001",
+        "ls-remote origin refs/heads/student-2025001",
         "fetch origin",
       ]);
       expect(fs.existsSync(path.join(dir, ".gitignore"))).toBe(false);
@@ -219,16 +221,48 @@ describe("updateOriginUrl", () => {
 });
 
 describe("configureStudentFetchRefSpec（fetch 收敛：只拉 main + 本人分支，不背全班历史）", () => {
-  it("按序两条：--replace-all 覆盖默认全量通配为 main，--add 补本人分支", async () => {
+  const REF_MAIN = "config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main";
+  const REF_STUDENT = "config --add remote.origin.fetch +refs/heads/student-2025001:refs/remotes/origin/student-2025001";
+  const LS_REMOTE = "ls-remote origin refs/heads/student-2025001";
+
+  function makeExec(routes: Record<string, string>) {
     const calls: string[][] = [];
-    const exec: ExecFn = async (_file, args) => { calls.push([...args]); return { stdout: "", stderr: "" }; };
+    const exec: ExecFn = async (_file, args) => {
+      calls.push([...args]);
+      const out = routes[args.join(" ")];
+      if (out === undefined) throw new Error(`no route for: git ${args.join(" ")}`);
+      return { stdout: out, stderr: "" };
+    };
+    return { calls, exec };
+  }
+
+  it("远端分支存在（换电脑/重装）→ ls-remote 探测到后按序两条 config", async () => {
+    const { calls, exec } = makeExec({ [REF_MAIN]: "", [LS_REMOTE]: "a1b2c3d\n", [REF_STUDENT]: "" });
 
     await configureStudentFetchRefSpec(createGitClient("C:/ws", exec), "2025001");
 
-    expect(calls.map((c) => c.join(" "))).toEqual([
-      "config --replace-all remote.origin.fetch +refs/heads/main:refs/remotes/origin/main",
-      "config --add remote.origin.fetch +refs/heads/student-2025001:refs/remotes/origin/student-2025001",
-    ]);
+    expect(calls.map((c) => c.join(" "))).toEqual([REF_MAIN, LS_REMOTE, REF_STUDENT]);
+  });
+
+  it("远端分支不存在（新学生首推前）→ 只配 main 一条（无匹配 refspec 会让 git fetch 直接 fatal）", async () => {
+    const { calls, exec } = makeExec({ [REF_MAIN]: "", [LS_REMOTE]: "" });
+
+    await configureStudentFetchRefSpec(createGitClient("C:/ws", exec), "2025001");
+
+    expect(calls.map((c) => c.join(" "))).toEqual([REF_MAIN, LS_REMOTE]);
+  });
+
+  it("ls-remote 失败（断网）→ 同不存在处理，只配 main（真实网络错误由后续 fetch 暴露）", async () => {
+    const calls: string[][] = [];
+    const exec: ExecFn = async (_file, args) => {
+      calls.push([...args]);
+      if (args.join(" ") === LS_REMOTE) throw new Error("connection refused");
+      return { stdout: "", stderr: "" };
+    };
+
+    await configureStudentFetchRefSpec(createGitClient("C:/ws", exec), "2025001");
+
+    expect(calls.map((c) => c.join(" "))).toEqual([REF_MAIN, LS_REMOTE]);
   });
 });
 
