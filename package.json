@@ -5,12 +5,17 @@
   "version": "1.0.8",
   "publisher": "deeptutor",
   "license": "Apache-2.0",
+  "icon": "assets/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wksansha/vscode_pylearner.git"
+  },
   "engines": {
     "vscode": "^1.96.0"
   },
   "categories": [
     "Education",
-    "Machine Learning"
+    "Programming Languages"
   ],
   "activationEvents": [
     "onLanguage:python",
