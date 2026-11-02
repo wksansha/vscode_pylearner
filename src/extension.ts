@@ -55,6 +55,7 @@ import { hasLocalChanges, syncToRemoteState } from "./git/syncOps";
 import { remoteWithBasic, probeGit, isGitWorkTree, bootstrapClone, updateOriginUrl, configureCommitter, disableNativeGitUi } from "./git/gitEnv";
 import { ensureStudentBranch } from "./git/branchOps";
 import { makeRunSuccessReviewer } from "./submission/reviewRequester";
+import { checkForUpdate, installUpdate } from "./update/updateChecker";
 import { buildProjectSnapshot as buildProjectSnapshotImpl } from "./submission/projectSnapshot";
 import { ulid } from "ulidx";
 
@@ -1035,6 +1036,36 @@ async function activateCore(context: vscode.ExtensionContext): Promise<void> {
       log("[pylearner] identity first-run check failed:", err);
     }
   })();
+
+  // —— 插件自更新（云分发）：启动 30s 后检查一次服务端版本清单；失败静默；不点更新本会话不再打扰 ——
+  // 当前版本取扩展自身 package.json（单一事实来源）；检查不依赖 teacher.enabled（与上报开关语义无关）
+  const currentVersion = () =>
+    (vscode.extensions.getExtension("deeptutor.vscode-pylearner")?.packageJSON?.version as string | undefined) ?? "0.0.0";
+  const updateTimer = setTimeout(() => {
+    void (async () => {
+      const info = await checkForUpdate({ teacherUrl: teacherUrl(), currentVersion: currentVersion() });
+      if (!info) return;
+      const pick = await vscode.window.showInformationMessage(
+        `课堂助手有新版本 ${info.version}${info.notes ? `：${info.notes}` : ""}`,
+        "立即更新"
+      );
+      if (pick !== "立即更新") return;
+      await installUpdate({
+        info,
+        showProgress: (title, task) =>
+          vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, task),
+        showMessage: (msg, btn) => vscode.window.showInformationMessage(msg, btn).then((p) => p === btn),
+        showError: (msg) => void vscode.window.showErrorMessage(msg),
+        executeCommand: (cmd, arg) => vscode.commands.executeCommand(cmd, arg),
+        writeFile: (p, data) => fs.promises.writeFile(p, data),
+        tmpDir: os.tmpdir(),
+        joinPath: path.join,
+        toUri: (p) => vscode.Uri.file(p),
+      });
+    })();
+  }, 30_000);
+  (updateTimer as unknown as { unref?: () => void }).unref?.();
+  context.subscriptions.push({ dispose: () => clearTimeout(updateTimer) });
 }
 
 export function deactivate() {
