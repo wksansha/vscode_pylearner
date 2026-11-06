@@ -45,7 +45,23 @@ export class TeacherBackend implements LlmBackend {
 
     if (!resp.ok) {
       const body = await resp.text();
-      throw new Error(`教师端代理错误 (${resp.status}): ${body.slice(0, 300)}`);
+      // 优先透传服务端的学生友好文案（如"学号不在名册中…""大模型访问失败…"）；
+      // 解析不出 JSON 时按状态码兜底，不再暴露"教师端代理错误"这类技术话术
+      let msg = "";
+      try {
+        msg = (JSON.parse(body) as { error?: string }).error ?? "";
+      } catch { /* 非 JSON 响应，走状态码兜底 */ }
+      if (!msg) {
+        const FALLBACK: Record<number, string> = {
+          403: "学号不在名册中，请核对身份页设置的学号，或联系教员",
+          429: "大模型访问繁忙（限流），请稍后重试",
+          502: "大模型访问失败，教师端大模型服务未开机或网络不通，请联系教员检查",
+          503: "大模型访问失败，教师端大模型服务暂不可用，请联系教员",
+          504: "大模型访问超时，请稍后重试",
+        };
+        msg = FALLBACK[resp.status] ?? "教师端服务异常，请稍后重试或联系教员";
+      }
+      throw new Error(msg);
     }
 
     await consumeSseStream(resp, onChunk);

@@ -56,13 +56,23 @@ describe("TeacherBackend（经课堂服务器代理聊天）", () => {
     expect((init.headers as Record<string, string>)["X-Student-Id"]).toBeUndefined();
   });
 
-  it("上游错误 → 抛出含状态码的错误", async () => {
+  it("上游错误 → 透传服务端 JSON 的 error 文案（不再显示'教师端代理错误'）", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "大模型访问失败：教师端大模型服务未开机或网络不通，请联系教员检查" }), { status: 502 })
+    ));
+    const backend = new TeacherBackend({ teacherUrl: "http://10.0.0.5:3000" });
+    await expect(
+      backend.chat([{ role: "user", content: "hi" }], () => {}, new AbortController().signal)
+    ).rejects.toThrow("大模型访问失败：教师端大模型服务未开机或网络不通，请联系教员检查");
+  });
+
+  it("上游错误且非 JSON 响应 → 按状态码输出学生友好文案", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
       new Response("server not configured", { status: 503 })
     ));
     const backend = new TeacherBackend({ teacherUrl: "http://10.0.0.5:3000" });
     await expect(
       backend.chat([{ role: "user", content: "hi" }], () => {}, new AbortController().signal)
-    ).rejects.toThrow("503");
+    ).rejects.toThrow("大模型访问失败");
   });
 });
